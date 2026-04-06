@@ -99,7 +99,7 @@ def run_grid_test():
     print("👉 1. 将鼠标随意丢在【第一行第一列】格子内（无需精准中心），按 'F4'")
     print("👉 2. 将鼠标随意丢在【最后一行最后一列】格子内，按 'F5'")
 
-    with keyboard.Listener(on_press=on_press) as listener:
+    with keyboard.Listener(on_press=on_press) as listener:  # type: ignore
         listener.join()
 
     print("\n📸 全局虚拟屏幕抓取中 (支持多屏穿透)...")

@@ -132,7 +132,7 @@ def run_auto_bot():
 
     if not vision.templates:
         print(
-            f"{C.YELLOW}💡 [学习模式激活] 当前视觉字库为空。AI 将在实战中收集新字形并请您手动标注！{C.RESET}"
+            f"{C.YELLOW}💡 [学习模式激活] 当前视觉字库为空。AI 将在实战中收集新字形并请手动标注！{C.RESET}"
         )
 
     vision.calibrate()
@@ -180,7 +180,7 @@ def run_auto_bot():
 
         if stats["blind"] == 0:
             print(
-                f"\n{C.GREEN}{C.BOLD}����🎉🎉 全图盲区清零！排雷成功！伟大的胜利！ 🎉🎉🎉{C.RESET}"
+                f"\n{C.GREEN}{C.BOLD}🎉🎉🎉 全图盲区清零！排雷成功！伟大的胜利！ 🎉🎉🎉{C.RESET}"
             )
             break
 
@@ -310,7 +310,7 @@ def run_auto_bot():
             baseline_surv = (1.0 - details["baseline_prob"]) * 100
 
             section_action.append(
-                f"{C.BOLD}▶ {C.YELLOW}防线击穿！转入【香农信息熵决策树】模式:{C.RESET}"
+                f"{C.BOLD}▶ {C.YELLOW}防线击穿，转入【香农信息熵决策树】模式:{C.RESET}"
             )
             section_action.append(
                 f"  基准存活率 : {C.CYAN}{baseline_surv:.2f}%{C.RESET} (全局盲狙黑区概率)"
@@ -344,7 +344,7 @@ def run_auto_bot():
                 )
                 if ctype != "内部盲狙":
                     section_action.append(
-                        f"      └ 建议: {rec_act} | 熵增益: {C.CYAN}{gain:.2f}{C.RESET} | 坍缩预期: {C.CYAN}{exp_rem:.1f}种{C.RESET}"
+                        f"      └ 建议: {rec_act} | 香农熵增益: {C.CYAN}{gain:.3f} bits{C.RESET} | 剩余宇宙期望: {C.CYAN}{exp_rem:,.0f} 种{C.RESET}"
                     )
 
             print_boxed_report(title, [section_radar, section_action], box_color)

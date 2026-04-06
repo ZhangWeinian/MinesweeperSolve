@@ -50,7 +50,6 @@ class HighResShapeOCR:
                 base_label = base_name.split("_")[0].upper()
                 path = os.path.join(self.template_dir, filename)
 
-                # 【新增】加入对 Q 的支持
                 if base_label in ["1", "2", "3", "4", "5", "6", "7", "8", "F", "Q"]:
                     tpl_bw = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
                     if tpl_bw is not None:
@@ -126,7 +125,7 @@ class HighResShapeOCR:
         print("\n📸 全局虚拟屏幕抓取中 (支持多屏穿透)...")
         self.monitor = self.sct.monitors[0]
         sct_img = self.sct.grab(self.monitor)
-        img_np = np.array(sct_img)[:, :, :3]
+        img_np = cv2.cvtColor(np.array(sct_img), cv2.COLOR_BGRA2BGR)
         self.offset_x, self.offset_y = self.monitor["left"], self.monitor["top"]
 
         c1_x, c1_y = self._find_true_center(img_np, pt1[0], pt1[1])
@@ -188,7 +187,7 @@ class HighResShapeOCR:
             # 如果暗斑小于 100 像素，坚决认为是纯盲区，返回 None
             return None, False
 
-        # 3. 白底找数字
+        # 白底找数字
         gray = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2GRAY)
 
         if np.min(gray) > 130:
@@ -199,7 +198,7 @@ class HighResShapeOCR:
             gray, max(0, bg_level - 30), 255, cv2.THRESH_BINARY_INV
         )
 
-        # 【优化】数字面积阈值从 25 提高到 80，过滤掉空地上的微小划痕/噪点！
+        # 数字面积阈值从 25 提高到 80，过滤掉空地上的微小划痕/噪点
         if np.count_nonzero(binary) < 80:
             return None, True
 
@@ -212,7 +211,14 @@ class HighResShapeOCR:
             return 0 if is_opened else -1
 
         best_match, max_score = None, -1
+        valid_labels = (
+            ["1", "2", "3", "4", "5", "6", "7", "8"] if is_opened else ["F", "Q"]
+        )
+
         for label, tpl_list in self.templates.items():
+            if label not in valid_labels:
+                continue
+
             for tpl in tpl_list:
                 res = cv2.matchTemplate(shape, tpl, cv2.TM_CCOEFF_NORMED)
                 score = res[0][0]
@@ -220,6 +226,7 @@ class HighResShapeOCR:
                     max_score = score
                     best_match = label
 
+        # 置信度判定
         threshold = 0.45 if force_guess else 0.7
 
         if max_score > threshold and best_match is not None:

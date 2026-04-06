@@ -1,82 +1,97 @@
 import math
 import time
 from collections import defaultdict
+from functools import lru_cache
 
 import numpy as np
 from numba import njit
+
+
+# 缓存组合数，消除跨层调用开销
+@lru_cache(maxsize=None)
+def fast_comb(n, k):
+    if k < 0 or k > n:
+        return 0
+    return math.comb(n, k)
 
 
 @njit(fastmath=True, cache=True)
 def dfs_numba(
     c_idx,
     num_cells,
-    num_eqs,
-    eq_matrix,
+    cell_to_eqs,
+    cell_eq_counts,
     eq_targets,
     cell_neighbors_matrix,
     eq_unassigned,
     eq_current_mines,
     current_assignment,
+    current_reveal_mines,
     config_counts,
     cell_mine_counts,
     cell_reveal_dists,
 ):
-
     if c_idx == num_cells:
         total_mines = 0
         for i in range(num_cells):
             if current_assignment[i] == 1:
                 total_mines += 1
-
-        config_counts[total_mines] += 1
-
-        for i in range(num_cells):
-            if current_assignment[i] == 1:
+                # 雷的计数
                 cell_mine_counts[total_mines, i] += 1
             else:
-                local_mines = 0
-                for j in range(num_cells):
-                    if cell_neighbors_matrix[i, j] == 1 and current_assignment[j] == 1:
-                        local_mines += 1
+                local_mines = current_reveal_mines[i]
                 cell_reveal_dists[total_mines, i, local_mines] += 1
+
+        config_counts[total_mines] += 1
         return
 
     for val in range(2):
         current_assignment[c_idx] = val
         is_valid = True
 
-        for i in range(num_eqs):
-            if eq_matrix[i, c_idx] == 1:
-                eq_unassigned[i] -= 1
-                if val == 1:
-                    eq_current_mines[i] += 1
+        for k in range(cell_eq_counts[c_idx]):
+            eq_idx = cell_to_eqs[c_idx, k]
+            eq_unassigned[eq_idx] -= 1
+            if val == 1:
+                eq_current_mines[eq_idx] += 1
 
-                if eq_current_mines[i] > eq_targets[i]:
-                    is_valid = False
-                if eq_current_mines[i] + eq_unassigned[i] < eq_targets[i]:
-                    is_valid = False
+            if eq_current_mines[eq_idx] > eq_targets[eq_idx]:
+                is_valid = False
+            if eq_current_mines[eq_idx] + eq_unassigned[eq_idx] < eq_targets[eq_idx]:
+                is_valid = False
 
         if is_valid:
+            if val == 1:
+                for j in range(num_cells):
+                    if cell_neighbors_matrix[c_idx, j] == 1:
+                        current_reveal_mines[j] += 1
+
             dfs_numba(
                 c_idx + 1,
                 num_cells,
-                num_eqs,
-                eq_matrix,
+                cell_to_eqs,
+                cell_eq_counts,
                 eq_targets,
                 cell_neighbors_matrix,
                 eq_unassigned,
                 eq_current_mines,
                 current_assignment,
+                current_reveal_mines,
                 config_counts,
                 cell_mine_counts,
                 cell_reveal_dists,
             )
 
-        for i in range(num_eqs):
-            if eq_matrix[i, c_idx] == 1:
-                eq_unassigned[i] += 1
-                if val == 1:
-                    eq_current_mines[i] -= 1
+            if val == 1:
+                for j in range(num_cells):
+                    if cell_neighbors_matrix[c_idx, j] == 1:
+                        current_reveal_mines[j] -= 1
+
+        for k in range(cell_eq_counts[c_idx]):
+            eq_idx = cell_to_eqs[c_idx, k]
+            eq_unassigned[eq_idx] += 1
+            if val == 1:
+                eq_current_mines[eq_idx] -= 1
 
     current_assignment[c_idx] = -1
 
@@ -88,38 +103,46 @@ class ExpertMinesweeperSolver:
         self.total_mines = total_mines
         self._is_jitted = False
 
+        self.neighbor_map = {}
+        for r in range(self.rows):
+            for c in range(self.cols):
+                neighbors = []
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if dr == 0 and dc == 0:
+                            continue
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                            neighbors.append((nr, nc))
+                self.neighbor_map[(r, c)] = neighbors
+
     def get_neighbors(self, r, c):
-        neighbors = []
-        for dr in [-1, 0, 1]:
-            for dc in [-1, 0, 1]:
-                if dr == 0 and dc == 0:
-                    continue
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                    neighbors.append((nr, nc))
-        return neighbors
+        return self.neighbor_map[(r, c)]
 
     def solve_step(self, board):
         if not self._is_jitted:
-            dummy_matrix = np.array([[1]], dtype=np.int8)
+            dummy_c2e = np.zeros((1, 8), dtype=np.int32)
+            dummy_cec = np.zeros(1, dtype=np.int32)
             dummy_targets = np.array([0], dtype=np.int8)
             dummy_neighbors = np.array([[0]], dtype=np.int8)
             dummy_un = np.array([1], dtype=np.int8)
             dummy_cur = np.array([0], dtype=np.int8)
             dummy_assign = np.array([-1], dtype=np.int8)
+            dummy_rev = np.zeros(1, dtype=np.int8)
             cfg = np.zeros(2, dtype=np.int64)
             cmc = np.zeros((2, 1), dtype=np.int64)
             crd = np.zeros((2, 1, 9), dtype=np.int64)
             dfs_numba(
                 0,
                 1,
-                1,
-                dummy_matrix,
+                dummy_c2e,
+                dummy_cec,
                 dummy_targets,
                 dummy_neighbors,
                 dummy_un,
                 dummy_cur,
                 dummy_assign,
+                dummy_rev,
                 cfg,
                 cmc,
                 crd,
@@ -154,19 +177,13 @@ class ExpertMinesweeperSolver:
                     if unknowns:
                         target = val - local_flags
                         if target < 0:
-                            raise ValueError(
-                                f"坐标 ({r}, {c}) 周围标记的旗帜数超出了数字本身！"
-                            )
+                            raise ValueError(f"坐标 ({r}, {c}) 周围标记超标！")
 
-                        # 减枝与平凡推导预扫描
                         if target == 0:
-                            # 规则 1：还需要 0 颗雷 -> 周围全安全
                             trivial_safe.update(unknowns)
                         elif target == len(unknowns):
-                            # 规则 2：需要的雷数 == 未知格子数 -> 周围全是雷
                             trivial_mine.update(unknowns)
                         else:
-                            # 只有无法被肉眼一眼看穿的复杂边界，才塞入方程组留给引擎算
                             frontier_cells.update(unknowns)
                             equations.append({"cells": set(unknowns), "target": target})
 
@@ -177,21 +194,19 @@ class ExpertMinesweeperSolver:
         total_unknowns = len(unknown_cells)
         baseline_prob = remaining_mines / max(1, total_unknowns)
 
-        # 如果发现了极其明显的线索，立刻返回执行
         if trivial_safe.intersection(trivial_mine):
-            raise ValueError("平凡推导产生矛盾：同一个格子既是雷又是安全区！")
+            raise ValueError("平凡推导产生矛盾！")
 
         if trivial_safe or trivial_mine:
             calc_time_ms = (time.perf_counter() - t_start) * 1000
             details = {
-                "blocks": 0,  # 拦截模式，未进入图论分块
-                "universes": 1,  # 基础推导不涉及宇宙坍缩
+                "blocks": 0,
+                "universes": 1,
                 "safe_found": len(trivial_safe),
                 "mine_found": len(trivial_mine),
                 "baseline_prob": baseline_prob,
                 "top_candidates": [],
             }
-
             decisions = []
             for cell in trivial_mine:
                 decisions.append(
@@ -221,28 +236,35 @@ class ExpertMinesweeperSolver:
                 d["batch_info"] = (idx + 1, total_d)
             return decisions
 
-        # 如果平凡推导未发现线索，遇到真·复杂拓扑边境，继续走 DFS+DP 深度强算
         isolated_cells = unknown_cells - frontier_cells
+
+        cell_to_eq_indices = defaultdict(list)
+        for i, eq in enumerate(equations):
+            for cell in eq["cells"]:
+                cell_to_eq_indices[cell].append(i)
 
         blocks = []
         eq_used = [False] * len(equations)
         for i in range(len(equations)):
             if eq_used[i]:
                 continue
-            current_block_eqs = [equations[i]]
-            current_block_cells = set(equations[i]["cells"])
+            current_block_eqs = []
+            current_block_cells = set()
+            queue = [i]
             eq_used[i] = True
-            queue = [equations[i]]
+
             while queue:
-                curr_eq = queue.pop(0)
-                for j, other_eq in enumerate(equations):
-                    if not eq_used[j] and curr_eq["cells"].intersection(
-                        other_eq["cells"]
-                    ):
-                        eq_used[j] = True
-                        current_block_eqs.append(other_eq)
-                        current_block_cells.update(other_eq["cells"])
-                        queue.append(other_eq)
+                curr_idx = queue.pop(0)
+                curr_eq = equations[curr_idx]
+                current_block_eqs.append(curr_eq)
+                for c in curr_eq["cells"]:
+                    if c not in current_block_cells:
+                        current_block_cells.add(c)
+                        for neighbor_eq_idx in cell_to_eq_indices[c]:
+                            if not eq_used[neighbor_eq_idx]:
+                                eq_used[neighbor_eq_idx] = True
+                                queue.append(neighbor_eq_idx)
+
             blocks.append(
                 {"cells": list(current_block_cells), "equations": current_block_eqs}
             )
@@ -262,12 +284,18 @@ class ExpertMinesweeperSolver:
 
             cell_to_idx = {c: i for i, c in enumerate(b_cells)}
 
-            eq_matrix = np.zeros((num_eqs, num_cells), dtype=np.int8)
+            cell_to_eqs = np.full((num_cells, 8), -1, dtype=np.int32)
+            cell_eq_counts = np.zeros(num_cells, dtype=np.int32)
             eq_targets = np.zeros(num_eqs, dtype=np.int8)
+            eq_unassigned = np.zeros(num_eqs, dtype=np.int8)
+
             for i, eq in enumerate(b_eqs):
                 eq_targets[i] = eq["target"]
+                eq_unassigned[i] = len(eq["cells"])
                 for c in eq["cells"]:
-                    eq_matrix[i, cell_to_idx[c]] = 1
+                    c_idx = cell_to_idx[c]
+                    cell_to_eqs[c_idx, cell_eq_counts[c_idx]] = i
+                    cell_eq_counts[c_idx] += 1
 
             cell_neighbors_matrix = np.zeros((num_cells, num_cells), dtype=np.int8)
             for i, c in enumerate(b_cells):
@@ -279,20 +307,21 @@ class ExpertMinesweeperSolver:
             config_counts = np.zeros(max_mines, dtype=np.int64)
             cell_mine_counts = np.zeros((max_mines, num_cells), dtype=np.int64)
             cell_reveal_dists = np.zeros((max_mines, num_cells, 9), dtype=np.int64)
-            eq_unassigned = np.sum(eq_matrix, axis=1, dtype=np.int8)
             eq_current_mines = np.zeros(num_eqs, dtype=np.int8)
             current_assignment = np.full(num_cells, -1, dtype=np.int8)
+            current_reveal_mines = np.zeros(num_cells, dtype=np.int8)  # 【传入增量表】
 
             dfs_numba(
                 0,
                 num_cells,
-                num_eqs,
-                eq_matrix,
+                cell_to_eqs,
+                cell_eq_counts,
                 eq_targets,
                 cell_neighbors_matrix,
                 eq_unassigned,
                 eq_current_mines,
                 current_assignment,
+                current_reveal_mines,
                 config_counts,
                 cell_mine_counts,
                 cell_reveal_dists,
@@ -334,7 +363,7 @@ class ExpertMinesweeperSolver:
 
         all_blocks_dp = get_dp_combinations(block_solutions)
         total_global_configs = sum(
-            ways * math.comb(len(isolated_cells), remaining_mines - m_blocks)
+            ways * fast_comb(len(isolated_cells), remaining_mines - m_blocks)
             for m_blocks, ways in all_blocks_dp.items()
             if 0 <= remaining_mines - m_blocks <= len(isolated_cells)
         )
@@ -350,7 +379,7 @@ class ExpertMinesweeperSolver:
         if isolated_cells:
             iso_mine_configs = sum(
                 ways
-                * math.comb(len(isolated_cells) - 1, remaining_mines - m_blocks - 1)
+                * fast_comb(len(isolated_cells) - 1, remaining_mines - m_blocks - 1)
                 for m_blocks, ways in all_blocks_dp.items()
                 if 1 <= remaining_mines - m_blocks <= len(isolated_cells)
             )
@@ -358,7 +387,7 @@ class ExpertMinesweeperSolver:
             for c in isolated_cells:
                 probabilities[c] = iso_prob
                 info_gains[c] = 0.0
-                exp_remaining[c] = total_global_configs  # 孤立格子点开无直接信息
+                exp_remaining[c] = total_global_configs
 
         for i, b_sol in enumerate(block_solutions):
             other_blocks = block_solutions[:i] + block_solutions[i + 1 :]
@@ -368,7 +397,7 @@ class ExpertMinesweeperSolver:
             for b_mines, b_data in b_sol.items():
                 valid_global_ways = sum(
                     o_ways
-                    * math.comb(
+                    * fast_comb(
                         len(isolated_cells), remaining_mines - (b_mines + o_mines)
                     )
                     for o_mines, o_ways in other_dp.items()
@@ -385,11 +414,22 @@ class ExpertMinesweeperSolver:
         for cell in frontier_cells:
             dist = global_reveal_dist[cell]
             total_safe_configs = sum(dist.values())
+
             if total_safe_configs > 0:
-                expected_rem = (
-                    sum(v_count**2 for v_count in dist.values()) / total_safe_configs
-                )
-                info_gains[cell] = 1.0 - (expected_rem / total_safe_configs)
+                entropy = 0.0
+                expected_rem = 0.0
+
+                for v, count in dist.items():
+                    p_v = count / total_safe_configs
+                    if p_v > 0:
+                        expected_rem += p_v * count
+                        v_entropy = -(p_v * math.log2(p_v))
+                        if v == 0:
+                            v_entropy *= 1.5
+
+                        entropy += v_entropy
+
+                info_gains[cell] = entropy
                 exp_remaining[cell] = expected_rem
             else:
                 info_gains[cell] = 0.0
@@ -400,13 +440,13 @@ class ExpertMinesweeperSolver:
 
         calc_time_ms = (time.perf_counter() - t_start) * 1000
 
-        # 封装极致细节
-        sorted_candidates = sorted(
-            probabilities.keys(),
-            key=lambda c: (round(probabilities[c], 3), -info_gains[c]),
-        )
+        def sort_key(c):
+            prob = probabilities[c]
+            bucket_prob = int(prob * 10000)
+            return (bucket_prob, -info_gains[c])
 
-        # 提取 Top 3 候选人
+        sorted_candidates = sorted(probabilities.keys(), key=sort_key)
+
         top_candidates = []
         for c in sorted_candidates[:3]:
             top_candidates.append(
@@ -428,10 +468,7 @@ class ExpertMinesweeperSolver:
             "top_candidates": top_candidates,
         }
 
-        # 将所有的绝对确定项打包成执行队列返回
         decisions = []
-
-        # 优先加入所有需要标记雷的操作
         for cell in certain_mine:
             decisions.append(
                 {
@@ -443,8 +480,6 @@ class ExpertMinesweeperSolver:
                     "details": details,
                 }
             )
-
-        # 紧接着加入所有绝对安全的操作
         for cell in certain_safe:
             decisions.append(
                 {
@@ -457,14 +492,12 @@ class ExpertMinesweeperSolver:
                 }
             )
 
-        # 如果有确定的批处理操作，标记批次序号并一次性返回列表
         if decisions:
             total_d = len(decisions)
             for idx, d in enumerate(decisions):
                 d["batch_info"] = (idx + 1, total_d)
             return decisions
 
-        # 如果没有确定项，则降级为盲猜，只返回一个最佳候选
         best_guess = sorted_candidates[0]
         guess_type = "边缘决策" if best_guess in frontier_cells else "内部盲狙"
 
@@ -476,6 +509,6 @@ class ExpertMinesweeperSolver:
                 "info_gain": info_gains[best_guess],
                 "calc_time": calc_time_ms,
                 "details": details,
-                "batch_info": (1, 1),  # 盲猜永远是单独执行
+                "batch_info": (1, 1),
             }
         ]
