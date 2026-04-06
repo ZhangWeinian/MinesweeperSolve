@@ -105,3 +105,48 @@ def print_board_matrix_for_debug(board):
     output_lines.append("]")
     output_lines.append(f"========================================{C.RESET}\n")
     print("\n".join(output_lines))
+
+
+def get_local_grid_str(board, action_type, center_r, center_c, radius=2):
+    """
+    生成 5x5 的局部战术沙盘视图，用于直观查看 AI 视野并排查视觉误判
+    """
+    rows = len(board)
+    cols = len(board[0])
+    lines = []
+    lines.append(f"{C.BOLD}▶ 局部视野 (以 {center_r},{center_c} 为中心):{C.RESET}")
+
+    for r in range(center_r - radius, center_r + radius + 1):
+        if 0 <= r < rows:
+            row_str = "    "
+            for c in range(center_c - radius, center_c + radius + 1):
+                if 0 <= c < cols:
+                    val = board[r][c]
+                    char = "?"
+                    color = C.RESET
+
+                    if val == -1:
+                        char = "■"
+                        color = C.CYAN
+                    elif val == 0:
+                        char = "·"
+                        color = C.RESET
+                    elif val == "F":
+                        char = "F"
+                        color = C.RED
+                    else:
+                        char = str(val)
+                        color = C.YELLOW
+
+                    if r == center_r and c == center_c:
+                        act_color = (
+                            C.GREEN
+                            if action_type == "CLICK"
+                            else (C.RED if action_type == "FLAG" else C.MAGENTA)
+                        )
+                        row_str += f"{act_color}【{char}】{C.RESET}"
+                    else:
+                        row_str += f" {color}{char}{C.RESET} "
+            lines.append(row_str)
+
+    return lines

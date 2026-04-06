@@ -5,15 +5,16 @@ import cv2
 import numpy as np
 import psutil
 import pyautogui
-from minesweeper_calculator import ExpertMinesweeperSolver
-from pynput import keyboard
-from terminal_ui import Colors as C
-from terminal_ui import (
+from model.minesweeper_calculator import ExpertMinesweeperSolver
+from model.terminal_ui import Colors as C
+from model.terminal_ui import (
     print_board_matrix_for_debug,
     print_boxed_report,
     print_naming_guide,
+    get_local_grid_str,
 )
-from vision_shape_ocr import HighResShapeOCR
+from model.vision_shape_ocr import HighResShapeOCR
+from pynput import keyboard
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UNKNOWN_DIR = os.path.join(BASE_DIR, "templates_unknown")
@@ -295,6 +296,10 @@ def run_auto_bot():
                 section_action.append(
                     f"  预估 : 命中 {C.GREEN}100.00%{C.RESET} / 踩空 {C.RED}0.00%{C.RESET}"
                 )
+
+            action_type = "GUESS" if "GUESS" in action else action
+            local_grid_lines = get_local_grid_str(board, action_type, r, c, radius=2)
+            section_action.extend(local_grid_lines)
 
             print_boxed_report(title, [section_radar, section_action], box_color)
 

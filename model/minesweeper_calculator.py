@@ -442,7 +442,7 @@ class ExpertMinesweeperSolver:
 
         def sort_key(c):
             prob = probabilities[c]
-            bucket_prob = int(prob * 10000)
+            bucket_prob = round(prob, 5)
             return (bucket_prob, -info_gains[c])
 
         sorted_candidates = sorted(probabilities.keys(), key=sort_key)

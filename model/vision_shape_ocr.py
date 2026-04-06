@@ -8,7 +8,7 @@ import mss
 import numpy as np
 from pynput import keyboard
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_physical_mouse_pos():
@@ -211,14 +211,7 @@ class HighResShapeOCR:
             return 0 if is_opened else -1
 
         best_match, max_score = None, -1
-        valid_labels = (
-            ["1", "2", "3", "4", "5", "6", "7", "8"] if is_opened else ["F", "Q"]
-        )
-
         for label, tpl_list in self.templates.items():
-            if label not in valid_labels:
-                continue
-
             for tpl in tpl_list:
                 res = cv2.matchTemplate(shape, tpl, cv2.TM_CCOEFF_NORMED)
                 score = res[0][0]
@@ -226,7 +219,6 @@ class HighResShapeOCR:
                     max_score = score
                     best_match = label
 
-        # 置信度判定
         threshold = 0.45 if force_guess else 0.7
 
         if max_score > threshold and best_match is not None:
