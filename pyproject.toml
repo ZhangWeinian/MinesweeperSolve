@@ -1,0 +1,19 @@
+[project]
+name = "minesweepersolve"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "mss>=10.1.0",
+    "numba>=0.65.0",
+    "numpy>=2.4.4",
+    "opencv-python>=4.13.0.92",
+    "psutil>=7.2.2",
+    "pyautogui>=0.9.54",
+    "pynput>=1.8.1",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

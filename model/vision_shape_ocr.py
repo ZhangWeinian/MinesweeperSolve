@@ -158,12 +158,12 @@ class HighResShapeOCR:
                 }
 
     def binarize_cell(self, cell_64x64_img):
-        b, g, r_ch = np.median(cell_64x64_img, axis=(0, 1))
-        is_opened = int(b) - int(r_ch) < 25
+        hsv = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2HSV)
+        center_hsv = hsv[12:52, 12:52]
+        median_s = np.median(center_hsv[:, :, 1])
+        is_opened = median_s < 60
 
         if not is_opened:
-            # 蓝底找红色的旗帜
-            hsv = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2HSV)
             mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([10, 255, 255]))
             mask2 = cv2.inRange(
                 hsv, np.array([170, 100, 100]), np.array([180, 255, 255])
@@ -174,35 +174,35 @@ class HighResShapeOCR:
             if np.count_nonzero(red_mask) > 50:
                 return red_mask, False
 
-            # 蓝底找黑/深色的问号
             gray = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2GRAY)
             bg_level = np.median(gray)
             _, dark_mask = cv2.threshold(
                 gray, max(0, bg_level - 30), 255, cv2.THRESH_BINARY_INV
             )
-            # 深色面积阈值从 20 提高到 100，过滤掉 3D 边框的阴影噪点！
+            # 深色面积阈值提高到 100，过滤掉 3D 边框的阴影噪点
             if np.count_nonzero(dark_mask) > 100:
                 return dark_mask, False
 
-            # 如果暗斑小于 100 像素，坚决认为是纯盲区，返回 None
+            # 纯盲区
             return None, False
 
-        # 白底找数字
-        gray = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = cv2.cvtColor(cell_64x64_img, cv2.COLOR_BGR2GRAY)
 
-        if np.min(gray) > 130:
-            return None, True
+            # 如果整个格子非常亮，说明根本没有深色数字
+            if np.min(gray) > 130:
+                return None, True
 
-        bg_level = np.median(gray)
-        _, binary = cv2.threshold(
-            gray, max(0, bg_level - 30), 255, cv2.THRESH_BINARY_INV
-        )
+            bg_level = np.median(gray)
+            _, binary = cv2.threshold(
+                gray, max(0, bg_level - 30), 255, cv2.THRESH_BINARY_INV
+            )
 
-        # 数字面积阈值从 25 提高到 80，过滤掉空地上的微小划痕/噪点
-        if np.count_nonzero(binary) < 80:
-            return None, True
+            # 数字面积阈值：过滤掉空地上的微小划痕/噪点
+            if np.count_nonzero(binary) < 80:
+                return None, True
 
-        return binary, True
+            return binary, True
 
     def identify_cell(self, cell_64x64_img, force_guess=False):
         shape, is_opened = self.binarize_cell(cell_64x64_img)
