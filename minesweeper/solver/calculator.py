@@ -7,7 +7,6 @@ import numpy as np
 from numba import njit
 
 
-# 缓存组合数，消除跨层调用开销
 @lru_cache(maxsize=None)
 def fast_comb(n, k):
     if k < 0 or k > n:
@@ -36,7 +35,6 @@ def dfs_numba(
         for i in range(num_cells):
             if current_assignment[i] == 1:
                 total_mines += 1
-                # 雷的计数
                 cell_mine_counts[total_mines, i] += 1
             else:
                 local_mines = current_reveal_mines[i]
@@ -309,7 +307,7 @@ class ExpertMinesweeperSolver:
             cell_reveal_dists = np.zeros((max_mines, num_cells, 9), dtype=np.int64)
             eq_current_mines = np.zeros(num_eqs, dtype=np.int8)
             current_assignment = np.full(num_cells, -1, dtype=np.int8)
-            current_reveal_mines = np.zeros(num_cells, dtype=np.int8)  # 【传入增量表】
+            current_reveal_mines = np.zeros(num_cells, dtype=np.int8)
 
             dfs_numba(
                 0,

@@ -108,9 +108,7 @@ def print_board_matrix_for_debug(board):
 
 
 def get_local_grid_str(board, action_type, center_r, center_c, radius=2):
-    """
-    生成 5x5 的局部战术沙盘视图，用于直观查看 AI 视野并排查视觉误判
-    """
+    """生成 5×5 的局部战术沙盘视图。"""
     rows = len(board)
     cols = len(board[0])
     lines = []
