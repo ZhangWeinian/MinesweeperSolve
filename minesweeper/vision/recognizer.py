@@ -1,138 +1,86 @@
-import cv2
+import json
+
 import numpy as np
-from skimage.metrics import structural_similarity as ssim
+import torch
+from PIL import Image
+from torchvision import transforms
 
-from ..config import (
-    COLOR_FALLBACK_THRESHOLD,
-    FORCE_THRESHOLD,
-    MATCH_PAD,
-    NORMAL_THRESHOLD,
-    SSIM_WEIGHT,
-    TEMPLATE_DIR,
-    TEMPLATE_SIZE,
-    TM_WEIGHT,
+from ..config import CNN_META_PATH, CNN_MODEL_PATH
+from .cnn_model import MinesweeperCNN
+from .preprocessor import binarize_cell
+
+_TRANSFORM = transforms.Compose(
+    [
+        transforms.Resize((64, 64)),
+        transforms.Grayscale(num_output_channels=1),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ]
 )
-from .preprocessor import KERNEL_3x3, binarize_cell, get_digit_color_label
-
-VALID_LABELS = frozenset(["1", "2", "3", "4", "5", "6", "7", "8", "F", "Q"])
 
 
 class CellRecognizer:
-    """模板匹配 + SSIM 结构相似度 + 颜色分类的多通道识别器。"""
+    """基于 CNN 的格子识别器。
+
+    识别流程：
+    1. binarize_cell 预判状态（hidden / blank / 有内容）
+    2. 仅对"有内容"的已翻开格子调用 CNN 推理
+    """
 
     def __init__(self):
-        self.templates: dict[str, list[np.ndarray]] = {}
-        self.load_templates()
+        with open(CNN_META_PATH) as f:
+            meta = json.load(f)
+        self.idx_to_class: dict[int, str] = {int(k): v for k, v in meta.items()}
+        num_classes = len(self.idx_to_class)
 
-    def load_templates(self):
-        self.templates.clear()
-        template_dir = TEMPLATE_DIR
-        if not template_dir.exists():
-            template_dir.mkdir(parents=True)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = MinesweeperCNN(num_classes=num_classes)
+        self.model.load_state_dict(torch.load(CNN_MODEL_PATH, map_location=self.device, weights_only=True))
+        self.model.to(self.device)
+        self.model.eval()
 
-        count = 0
-        for path in template_dir.iterdir():
-            if path.suffix.lower() != ".png":
-                continue
-            base_label = path.stem.split("_")[0].upper()
-            if base_label not in VALID_LABELS:
-                continue
+        print(f"✅ [CNN 识别引擎] 模型已加载，设备: {self.device}，类别数: {num_classes}")
 
-            tpl_bw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            if tpl_bw is None:
-                continue
+    def load_templates(self) -> None:
+        """兼容旧接口的空方法，CNN 模式下无需重载模板。"""
 
-            resized = cv2.resize(tpl_bw, TEMPLATE_SIZE)
-            # 统一二值化 + 形态学处理，与 binarize_cell 管线一致
-            _, clean = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
-            clean = cv2.morphologyEx(clean, cv2.MORPH_OPEN, KERNEL_3x3)
-            self.templates.setdefault(base_label, []).append(clean)
-            count += 1
-
-        print(
-            f"✅ [视觉特征库] 成功挂载 {count} 个 {TEMPLATE_SIZE[0]}×{TEMPLATE_SIZE[1]} 模板。"
-        )
-
-    def identify(self, cell_img, force_guess=False):
-        """识别单个 64×64 格子。
+    def _cnn_predict(self, cell_img_bgr: np.ndarray) -> str:
+        """对 BGR numpy 格子图像运行 CNN 推理。
 
         Returns:
-            int (0-8) | "F" | "Q" | -1 (未翻开) | "?" (无法识别)
+            类别字符串，"1"-"8" 或 "flag"
+        """
+        # BGR → RGB → PIL Image
+        rgb = cell_img_bgr[:, :, ::-1].copy()
+        pil_img = Image.fromarray(rgb.astype(np.uint8))
+        tensor = _TRANSFORM(pil_img).unsqueeze(0).to(self.device)  # type: ignore[assignment]
+
+        with torch.no_grad():
+            _, idx = torch.max(self.model(tensor), 1)
+
+        return self.idx_to_class[int(idx.item())]
+
+    def identify(self, cell_img: np.ndarray, force_guess: bool = False):
+        """识别单个 64×64 格子。
+
+        Args:
+            cell_img: BGR numpy 数组 (64×64)
+            force_guess: 保留参数，与旧接口兼容，当前实现不使用
+
+        Returns:
+            int (0-8) | "F" | -1 (未翻开)
         """
         shape, is_opened = binarize_cell(cell_img)
 
+        if not is_opened:
+            if shape is not None:
+                return "F"
+            return -1
+
         if shape is None:
-            return 0 if is_opened else -1
+            return 0
 
-        if not self.templates:
-            return "?"
-
-        # ── 滑动窗口 + SSIM 混合匹配 ────────────────────
-        pad = MATCH_PAD
-        h, w = shape.shape
-        padded = np.zeros((h + 2 * pad, w + 2 * pad), dtype=np.uint8)
-        padded[pad : pad + h, pad : pad + w] = shape
-
-        # 第一轮：模板匹配，取每个 label 的最佳得分
-        label_best: dict[str, tuple[float, tuple, np.ndarray]] = {}
-        for label, tpl_list in self.templates.items():
-            for tpl in tpl_list:
-                res = cv2.matchTemplate(padded, tpl, cv2.TM_CCOEFF_NORMED)
-                _, tm_score, _, max_loc = cv2.minMaxLoc(res)
-                if label not in label_best or tm_score > label_best[label][0]:
-                    label_best[label] = (tm_score, max_loc, tpl)
-
-        # 按 TM 得分排序
-        ranked = sorted(label_best.items(), key=lambda x: x[1][0], reverse=True)
-
-        # 第二轮：对 Top-2 候选计算 SSIM 精细评分
-        refined = []
-        for label, (tm_score, max_loc, tpl) in ranked[:2]:
-            mx, my = max_loc
-            th, tw = tpl.shape
-            aligned = padded[my : my + th, mx : mx + tw]
-            ssim_val = ssim(aligned, tpl, data_range=255)
-            combined = TM_WEIGHT * tm_score + SSIM_WEIGHT * ssim_val
-            refined.append((label, combined))
-
-        # 剩余候选保留原始 TM 得分
-        for label, (tm_score, _, _) in ranked[2:]:
-            refined.append((label, tm_score))
-
-        refined.sort(key=lambda x: x[1], reverse=True)
-
-        best_label, best_score = refined[0]
-        second_label = refined[1][0] if len(refined) > 1 else None
-        second_score = refined[1][1] if len(refined) > 1 else -1.0
-
-        # ── 颜色辅助识别（仅对已翻开的数字格生效）──────
-        color_label = None
-        if is_opened and best_label not in ("F", "Q"):
-            color_label = get_digit_color_label(cell_img, shape)
-
-        threshold = FORCE_THRESHOLD if force_guess else NORMAL_THRESHOLD
-
-        if best_score > threshold and best_label is not None:
-            # 模板 + 颜色一致 → 高置信度
-            if color_label is None or best_label == color_label:
-                return best_label if best_label in ("F", "Q") else int(best_label)
-
-            # 颜色与模板矛盾，但第二名恰好是颜色候选且分差极小 → 信任颜色
-            if second_label == color_label and (best_score - second_score) < 0.12:
-                return int(color_label)
-
-            # 模板分数足够高，仍信任模板
-            if best_score > 0.70:
-                return best_label if best_label in ("F", "Q") else int(best_label)
-
-            # 低置信度区间，优先颜色
-            if color_label:
-                return int(color_label)
-
-            return best_label if best_label in ("F", "Q") else int(best_label)
-
-        # 低于阈值 → 尝试用颜色兜底
-        if color_label and best_score > COLOR_FALLBACK_THRESHOLD:
-            return int(color_label)
-
-        return 0 if force_guess else "?"
+        label = self._cnn_predict(cell_img)
+        if label == "flag":
+            return "F"
+        return int(label)  # "1"-"8" → 1-8

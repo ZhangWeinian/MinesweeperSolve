@@ -26,13 +26,11 @@ class ScreenCapture:
     def __init__(self, rows=ROWS, cols=COLS):
         self.rows = rows
         self.cols = cols
-        self.grid_map: list[list[Any]] = [
-            [None for _ in range(cols)] for _ in range(rows)
-        ]
+        self.grid_map: list[list[Any]] = [[None for _ in range(cols)] for _ in range(rows)]
         self.sct = mss.mss()
         self.offset_x = 0
         self.offset_y = 0
-        self.monitor = None
+        self.monitor = self.sct.monitors[0]
 
     def grab_frame(self):
         """截取当前屏幕帧，返回 BGR numpy 数组。"""

@@ -1,5 +1,3 @@
-"""Bot 主循环：扫描 → 求解 → 执行 → 交互。"""
-
 import os
 import time
 
@@ -25,12 +23,11 @@ class BotState:
     def __init__(self):
         self.stop = False
         self.waiting = False
-        self.decision = None
+        self.decision: str | None = None
 
 
 def run_auto_bot():
     state = BotState()
-    error_counts: dict[str, int] = {}
 
     intro_msg = [
         f"{C.CYAN}{C.BOLD}" + "=" * 60,
@@ -42,12 +39,6 @@ def run_auto_bot():
     capture = ScreenCapture(rows=ROWS, cols=COLS)
     recognizer = CellRecognizer()
     solver = ExpertMinesweeperSolver(rows=ROWS, cols=COLS, total_mines=TOTAL_MINES)
-
-    if not recognizer.templates:
-        print(
-            f"{C.YELLOW}💡 [学习模式激活] 当前视觉字库为空。"
-            f"AI 将在实战中收集新字形并请手动标注！{C.RESET}"
-        )
 
     capture.calibrate()
 
@@ -81,7 +72,7 @@ def run_auto_bot():
     execution_queue = []
 
     while not state.stop:
-        board_data = scan_full_board(capture, recognizer, error_counts, state)
+        board_data = scan_full_board(capture, recognizer, state)
 
         if state.stop:
             os._exit(0)
@@ -92,9 +83,7 @@ def run_auto_bot():
         board, stats = board_data
 
         if stats["blind"] == 0:
-            print(
-                f"\n{C.GREEN}{C.BOLD}🎉🎉🎉 全图盲区清零！排雷成功！伟大的胜利！ 🎉🎉🎉{C.RESET}"
-            )
+            print(f"\n{C.GREEN}{C.BOLD}🎉🎉🎉 全图盲区清零！排雷成功！伟大的胜利！ 🎉🎉🎉{C.RESET}")
             break
 
         if stats["flag"] >= TOTAL_MINES and stats["blind"] > 0:
@@ -166,11 +155,7 @@ def run_auto_bot():
         target_y = cell_data["cy"]
         universe_str = f"{details['universes']:,}"
 
-        batch_str = (
-            f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}"
-            if batch_total > 1
-            else ""
-        )
+        batch_str = f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}" if batch_total > 1 else ""
         title = f"{C.BOLD}[回合 {step_count:03d}]{C.RESET}{batch_str}"
 
         section_radar = [
@@ -183,8 +168,7 @@ def run_auto_bot():
             f"  性能: CPU {C.YELLOW}{cpu_usage:04.1f}%{C.RESET} "
             f"RAM {C.YELLOW}{ram_usage:04.1f}%{C.RESET} | "
             f"单批脑力: {C.MAGENTA}{calc_time:.1f}ms{C.RESET}",
-            f"  全局: 拓扑边界 {details['blocks']} 块 | "
-            f"合法宇宙 {C.CYAN}{universe_str} 种{C.RESET}",
+            f"  全局: 拓扑边界 {details['blocks']} 块 | " f"合法宇宙 {C.CYAN}{universe_str} 种{C.RESET}",
         ]
 
         section_action = []
@@ -204,8 +188,7 @@ def run_auto_bot():
                         f"{C.BOLD}▶ 战术执行:{C.RESET}",
                         f"  动作 : {C.GREEN}[左键探索安全]{C.RESET}",
                         f"  坐标 : {C.MAGENTA}({r:02d}, {c:02d}){C.RESET}",
-                        f"  预估 : 存活 {C.GREEN}100.00%{C.RESET} / "
-                        f"阵亡 {C.RED}0.00%{C.RESET}",
+                        f"  预估 : 存活 {C.GREEN}100.00%{C.RESET} / " f"阵亡 {C.RED}0.00%{C.RESET}",
                     ]
                 )
             else:
@@ -214,8 +197,7 @@ def run_auto_bot():
                         f"{C.BOLD}▶ 战术执行:{C.RESET}",
                         f"  动作 : {C.RED}[右键布置信标]{C.RESET}",
                         f"  坐标 : {C.MAGENTA}({r:02d}, {c:02d}){C.RESET}",
-                        f"  预估 : 命中 {C.GREEN}100.00%{C.RESET} / "
-                        f"踩空 {C.RED}0.00%{C.RESET}",
+                        f"  预估 : 命中 {C.GREEN}100.00%{C.RESET} / " f"踩空 {C.RED}0.00%{C.RESET}",
                     ]
                 )
 
@@ -236,23 +218,14 @@ def run_auto_bot():
             box_color = C.YELLOW
             baseline_surv = (1.0 - details["baseline_prob"]) * 100
 
-            section_action.append(
-                f"{C.BOLD}▶ {C.YELLOW}防线击穿，转入【香农信息熵决策树】模式:{C.RESET}"
-            )
-            section_action.append(
-                f"  基准存活率 : {C.CYAN}{baseline_surv:.2f}%{C.RESET} "
-                f"(全局盲狙黑区概率)"
-            )
+            section_action.append(f"{C.BOLD}▶ {C.YELLOW}防线击穿，转入【香农信息熵决策树】模式:{C.RESET}")
+            section_action.append(f"  基准存活率 : {C.CYAN}{baseline_surv:.2f}%{C.RESET} " f"(全局盲狙黑区概率)")
             section_action.append(f"{C.BOLD}▶ Top 3 分析树:{C.RESET}")
 
             candidates = details["top_candidates"]
             for idx, cand in enumerate(candidates):
                 is_best = idx == 0
-                tag = (
-                    f"{C.GREEN}[最佳]{C.RESET}"
-                    if is_best
-                    else f"{C.YELLOW}[备选]{C.RESET}"
-                )
+                tag = f"{C.GREEN}[最佳]{C.RESET}" if is_best else f"{C.YELLOW}[备选]{C.RESET}"
                 cr, cc = cand["cell"]
                 surv = (1.0 - cand["prob"]) * 100
                 gain = cand["info_gain"]
@@ -263,15 +236,10 @@ def run_auto_bot():
                 branch = "┣" if idx < len(candidates) - 1 else "┗"
 
                 section_action.append(
-                    f"  {branch} {tag} {C.MAGENTA}({cr:02d}, {cc:02d}){C.RESET} "
-                    f"{ctype} | 预估存活: {surv_str}"
+                    f"  {branch} {tag} {C.MAGENTA}({cr:02d}, {cc:02d}){C.RESET} " f"{ctype} | 预估存活: {surv_str}"
                 )
                 if ctype != "内部盲狙":
-                    rec_act = (
-                        f"{C.GREEN}[左键]{C.RESET}"
-                        if surv >= 50
-                        else f"{C.RED}[右键]{C.RESET}"
-                    )
+                    rec_act = f"{C.GREEN}[左键]{C.RESET}" if surv >= 50 else f"{C.RED}[右键]{C.RESET}"
                     section_action.append(
                         f"      └ 建议: {rec_act} | "
                         f"香农熵增益: {C.CYAN}{gain:.3f} bits{C.RESET} | "
@@ -286,14 +254,11 @@ def run_auto_bot():
             best_target_y = capture.grid_map[best_r][best_c]["cy"]
 
             wait_msg = [
-                f"\n{C.MAGENTA}✨ 准星已自动锁定最佳决策点位 "
-                f"({best_r:02d}, {best_c:02d})！{C.RESET}",
+                f"\n{C.MAGENTA}✨ 准星已自动锁定最佳决策点位 " f"({best_r:02d}, {best_c:02d})！{C.RESET}",
                 f"👉 {C.YELLOW}[挂起] 请选择操作 (无需切屏即可生效)：{C.RESET}",
-                f"   {C.GREEN}【← 左方向键】{C.RESET} : "
-                f"采纳建议，让 AI 左键点开该格",
+                f"   {C.GREEN}【← 左方向键】{C.RESET} : " f"采纳建议，让 AI 左键点开该格",
                 f"   {C.RED}【→ 右方向键】{C.RESET} : " f"采纳建议，让 AI 右键标记该格",
-                f"   {C.CYAN}【Enter 回车】{C.RESET} : "
-                f"我已手动操作，直接让 AI 继续扫描",
+                f"   {C.CYAN}【Enter 回车】{C.RESET} : " f"我已手动操作，直接让 AI 继续扫描",
             ]
             print("\n".join(wait_msg))
 

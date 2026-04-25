@@ -1,9 +1,3 @@
-"""
-Minesweeper 包根入口
-
-在此对外暴露应用核心运行器等功能。
-"""
-
 import ctypes
 import os
 
