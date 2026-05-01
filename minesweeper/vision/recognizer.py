@@ -12,9 +12,8 @@ from .preprocessor import binarize_cell
 _TRANSFORM = transforms.Compose(
     [
         transforms.Resize((64, 64)),
-        transforms.Grayscale(num_output_channels=1),
         transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,)),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ]
 )
 
@@ -60,12 +59,11 @@ class CellRecognizer:
 
         return self.idx_to_class[int(idx.item())]
 
-    def identify(self, cell_img: np.ndarray, force_guess: bool = False):
+    def identify(self, cell_img: np.ndarray):
         """识别单个 64×64 格子。
 
         Args:
             cell_img: BGR numpy 数组 (64×64)
-            force_guess: 保留参数，与旧接口兼容，当前实现不使用
 
         Returns:
             int (0-8) | "F" | -1 (未翻开)

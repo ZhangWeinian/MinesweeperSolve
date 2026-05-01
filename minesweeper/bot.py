@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 import psutil
@@ -10,9 +11,12 @@ from .scanner import scan_full_board
 from .solver import ExpertMinesweeperSolver
 from .ui import Colors as C
 from .ui import get_local_grid_str, print_board_matrix_for_debug, print_boxed_report
-from .vision import CellRecognizer, ScreenCapture
+from .vision import CellRecognizer, DatasetCollector, ScreenCapture
 
 pyautogui.PAUSE = 0.0
+
+MAX_BATCH_FLAGS = 5
+ACTION_DELAY_SECONDS = 0.85
 
 
 class BotState:
@@ -24,6 +28,77 @@ class BotState:
         self.stop = False
         self.waiting = False
         self.decision: str | None = None
+
+
+def _count_numeric_neighbors(board, cell):
+    r, c = cell
+    rows = len(board)
+    cols = len(board[0]) if rows else 0
+    support = 0
+
+    for nr in range(max(0, r - 1), min(rows, r + 2)):
+        for nc in range(max(0, c - 1), min(cols, c + 2)):
+            if (nr, nc) == (r, c):
+                continue
+            val = board[nr][nc]
+            if isinstance(val, int) and val > 0:
+                support += 1
+
+    return support
+
+
+def _select_execution_batch(board, decisions):
+    flags = [d for d in decisions if d["action"] == "FLAG"]
+    clicks = [d for d in decisions if d["action"] == "CLICK"]
+
+    def rank_key(decision):
+        support = _count_numeric_neighbors(board, decision["cell"])
+        return (-support, decision["cell"][0], decision["cell"][1])
+
+    flags.sort(key=rank_key)
+    clicks.sort(key=rank_key)
+
+    # 旗帜不会展开新盘面，适合小批量连击；点击会剧烈改变局势，只执行一步后立刻全局重算。
+    if flags:
+        return flags[:MAX_BATCH_FLAGS]
+    if clicks:
+        return clicks[:1]
+    return decisions[:1]
+
+
+def _format_clue_line(clue):
+    rr, cc = clue["cell"]
+    return (
+        f"      └ ({rr:02d},{cc:02d})={clue['value']} | "
+        f"周旗 {clue['flags']} | 周盲 {clue['unknowns']} | 剩余雷 {clue['target']}"
+    )
+
+
+def _build_debug_section(board, decision):
+    debug = decision.get("debug", {})
+    mine_prob = debug.get("mine_prob", decision.get("prob", 0.0)) * 100
+    safe_prob = debug.get("safe_prob", 1.0 - decision.get("prob", 0.0)) * 100
+    info_gain = debug.get("info_gain", decision.get("info_gain", 0.0))
+    support = _count_numeric_neighbors(board, decision["cell"])
+
+    lines = [
+        f"{C.BOLD}▶ 调试剖析:{C.RESET}",
+        f"  来源 : {C.CYAN}{debug.get('source', '未知')}{C.RESET} | 区域 : {C.CYAN}{debug.get('region', '未知')}{C.RESET}",
+        f"  概率 : 安全 {C.GREEN}{safe_prob:06.2f}%{C.RESET} | 地雷 {C.RED}{mine_prob:06.2f}%{C.RESET}",
+        f"  支撑 : 邻接数字 {C.YELLOW}{support}{C.RESET} 个 | 相关线索 {C.YELLOW}{debug.get('support_clues', 0)}{C.RESET} 条 | 熵增益 {C.MAGENTA}{info_gain:.3f}{C.RESET} bits",
+    ]
+
+    clues = debug.get("clues", [])
+    if clues:
+        lines.append(f"{C.BOLD}▶ 关联线索:{C.RESET}")
+        for clue in clues[:5]:
+            lines.append(_format_clue_line(clue))
+        if len(clues) > 5:
+            lines.append(f"      └ ... 其余 {len(clues) - 5} 条线索已省略")
+    else:
+        lines.append(f"{C.BOLD}▶ 关联线索:{C.RESET} 无（该格当前不受已开数字直接约束）")
+
+    return lines
 
 
 def run_auto_bot():
@@ -39,6 +114,7 @@ def run_auto_bot():
     capture = ScreenCapture(rows=ROWS, cols=COLS)
     recognizer = CellRecognizer()
     solver = ExpertMinesweeperSolver(rows=ROWS, cols=COLS, total_mines=TOTAL_MINES)
+    collector = DatasetCollector()
 
     capture.calibrate()
 
@@ -70,9 +146,10 @@ def run_auto_bot():
 
     step_count = 0
     execution_queue = []
+    cell_images: dict = {}  # 最近一次扫描的格子图像，供误识别报告使用
 
     while not state.stop:
-        board_data = scan_full_board(capture, recognizer, state)
+        board_data = scan_full_board(capture, recognizer, state, collector)
 
         if state.stop:
             os._exit(0)
@@ -80,27 +157,20 @@ def run_auto_bot():
         if board_data[0] is None:
             continue
 
-        board, stats = board_data
+        board, stats, cell_images = board_data
 
         if stats["blind"] == 0:
             print(f"\n{C.GREEN}{C.BOLD}🎉🎉🎉 全图盲区清零！排雷成功！伟大的胜利！ 🎉🎉🎉{C.RESET}")
+            collector.reset_session()
             break
 
         if stats["flag"] >= TOTAL_MINES and stats["blind"] > 0:
             print(
                 f"\n{C.MAGENTA}🏆 已标记满 {TOTAL_MINES} 颗雷！"
-                f"进入【最终清场模式】，直接点开剩余 {stats['blind']} 个盲区！{C.RESET}"
+                f"进入【最终清场模式】，请直接点开剩余 {stats['blind']} 个盲区！{C.RESET}"
             )
             execution_queue.clear()
-            for r in range(ROWS):
-                for c in range(COLS):
-                    if board[r][c] == -1:
-                        cell_data = capture.grid_map[r][c]
-                        if cell_data is not None:
-                            pyautogui.click(cell_data["cx"], cell_data["cy"])
-                            time.sleep(0.03)
-
-            print(f"\n{C.GREEN}{C.BOLD}🎉🎉🎉 战术清场完毕，排雷成功！ 🎉🎉🎉{C.RESET}")
+            collector.reset_session()
             break
 
         # 消耗已完成的队列项
@@ -131,6 +201,25 @@ def run_auto_bot():
                 step_count -= 1
                 continue
 
+            # 检查并保存疑似误识别格子
+            for r_err, c_err, val_err in solver.suspicious_cells:
+                img_err = cell_images.get((r_err, c_err))
+                if img_err is not None:
+                    collector.save_error(img_err, val_err)
+                    print(
+                        f"  {C.YELLOW}[数据集] 误识别样本已存档: ({r_err},{c_err}) label={val_err}{C.RESET}",
+                        file=sys.stderr,
+                    )
+
+            # 策略：优先执行最可靠的插旗；插旗最多连击 5 次。
+            # 对于 CLICK，只执行 1 次后立刻重新识别与全局计算，避免旧盘面上的“确定点击”在新盘面里失真。
+            decisions = _select_execution_batch(board, decisions)
+
+            # 更新连击标记信息，供日志准确显示
+            total_d = len(decisions)
+            for idx, d in enumerate(decisions):
+                d["batch_info"] = (idx + 1, total_d)
+
             execution_queue.extend(decisions)
             decision = execution_queue.pop(0)
             step_count += 1
@@ -140,8 +229,6 @@ def run_auto_bot():
 
         action = decision["action"]
         r, c = decision["cell"]
-        prob = decision["prob"]
-        info_gain = decision["info_gain"]
         calc_time = decision["calc_time"]
         details = decision["details"]
         batch_idx, batch_total = decision["batch_info"]
@@ -204,15 +291,17 @@ def run_auto_bot():
             action_type = "GUESS" if "GUESS" in action else action
             local_grid_lines = get_local_grid_str(board, action_type, r, c, radius=2)
             section_action.extend(local_grid_lines)
+            section_debug = _build_debug_section(board, decision)
 
-            print_boxed_report(title, [section_radar, section_action], box_color)
+            print_boxed_report(title, [section_radar, section_action, section_debug], box_color)
 
             if action == "CLICK":
                 pyautogui.click(target_x, target_y)
             else:
                 pyautogui.rightClick(target_x, target_y)
 
-            time.sleep(0.15)
+            # 统一固定执行间隔，既避免防误触，也给扫雷自身的“大片空白展开”预留动画时间，确保障碍扫面能够立刻重新捕捉状态
+            time.sleep(ACTION_DELAY_SECONDS)
 
         else:
             box_color = C.YELLOW
@@ -246,7 +335,9 @@ def run_auto_bot():
                         f"剩余宇宙期望: {C.CYAN}{exp_rem:,.0f} 种{C.RESET}"
                     )
 
-            print_boxed_report(title, [section_radar, section_action], box_color)
+            section_debug = _build_debug_section(board, decision)
+
+            print_boxed_report(title, [section_radar, section_action, section_debug], box_color)
 
             best_cand = candidates[0]
             best_r, best_c = best_cand["cell"]

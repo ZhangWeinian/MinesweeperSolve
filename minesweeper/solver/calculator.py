@@ -1,4 +1,5 @@
 import math
+import sys
 import time
 from collections import defaultdict
 from functools import lru_cache
@@ -35,6 +36,9 @@ def dfs_numba(
         for i in range(num_cells):
             if current_assignment[i] == 1:
                 total_mines += 1
+
+        for i in range(num_cells):
+            if current_assignment[i] == 1:
                 cell_mine_counts[total_mines, i] += 1
             else:
                 local_mines = current_reveal_mines[i]
@@ -100,6 +104,9 @@ class ExpertMinesweeperSolver:
         self.cols = cols
         self.total_mines = total_mines
         self._is_jitted = False
+        # 每次 solve_step 调用后填充：疑似误识别格子坐标及其识别值
+        # 格式: list of (row, col, detected_value)
+        self.suspicious_cells: list[tuple] = []
 
         self.neighbor_map = {}
         for r in range(self.rows):
@@ -116,6 +123,57 @@ class ExpertMinesweeperSolver:
 
     def get_neighbors(self, r, c):
         return self.neighbor_map[(r, c)]
+
+    def _collect_supporting_clues(self, board, cell):
+        clues = []
+        for nr, nc in self.get_neighbors(*cell):
+            val = board[nr][nc]
+            if not (isinstance(val, int) and val > 0):
+                continue
+
+            unknowns = []
+            local_flags = 0
+            for ar, ac in self.get_neighbors(nr, nc):
+                if board[ar][ac] == -1:
+                    unknowns.append((ar, ac))
+                elif board[ar][ac] == "F":
+                    local_flags += 1
+
+            if cell in unknowns:
+                clues.append(
+                    {
+                        "cell": (nr, nc),
+                        "value": val,
+                        "flags": local_flags,
+                        "unknowns": len(unknowns),
+                        "target": val - local_flags,
+                    }
+                )
+
+        clues.sort(key=lambda item: (item["cell"][0], item["cell"][1]))
+        return clues
+
+    def _make_debug_info(self, board, cell, source, mine_prob, info_gain, frontier_cells=None, isolated_cells=None):
+        frontier_cells = frontier_cells or set()
+        isolated_cells = isolated_cells or set()
+        clue_details = self._collect_supporting_clues(board, cell)
+
+        if cell in frontier_cells:
+            region = "边界格"
+        elif cell in isolated_cells:
+            region = "孤立格"
+        else:
+            region = "局部规则格"
+
+        return {
+            "source": source,
+            "mine_prob": float(mine_prob),
+            "safe_prob": float(1.0 - mine_prob),
+            "info_gain": float(info_gain),
+            "region": region,
+            "support_clues": len(clue_details),
+            "clues": clue_details,
+        }
 
     def solve_step(self, board):
         if not self._is_jitted:
@@ -148,6 +206,7 @@ class ExpertMinesweeperSolver:
             self._is_jitted = True
 
         t_start = time.perf_counter()
+        self.suspicious_cells = []
 
         equations = []
         frontier_cells = set()
@@ -172,10 +231,25 @@ class ExpertMinesweeperSolver:
                         elif board[nr][nc] == "F":
                             local_flags += 1
 
+                    # 标记数超过数值 → 误识别，无论是否有未知邻居都跳过
+                    if local_flags > val:
+                        print(
+                            f"⚠️  [识别警告] ({r},{c}) 数字={val} 但周围旗帜已达 {local_flags} 个，疑似误识别，已跳过",
+                            file=sys.stderr,
+                        )
+                        self.suspicious_cells.append((r, c, val))
+                        continue
+
                     if unknowns:
                         target = val - local_flags
-                        if target < 0:
-                            raise ValueError(f"坐标 ({r}, {c}) 周围标记超标！")
+                        if target > len(unknowns):
+                            # CNN 误识别：数字超出可用未知格数，忽略该约束并记录可疑格子
+                            print(
+                                f"⚠️  [识别警告] ({r},{c}) 数字={val} 但可用未知邻居仅 {len(unknowns)} 个，疑似误识别，已跳过",
+                                file=sys.stderr,
+                            )
+                            self.suspicious_cells.append((r, c, val))
+                            continue
 
                         if target == 0:
                             trivial_safe.update(unknowns)
@@ -215,6 +289,7 @@ class ExpertMinesweeperSolver:
                         "info_gain": 0.0,
                         "calc_time": calc_time_ms,
                         "details": details,
+                        "debug": self._make_debug_info(board, cell, "平凡规则-必雷", 1.0, 0.0),
                     }
                 )
             for cell in trivial_safe:
@@ -226,6 +301,7 @@ class ExpertMinesweeperSolver:
                         "info_gain": 0.0,
                         "calc_time": calc_time_ms,
                         "details": details,
+                        "debug": self._make_debug_info(board, cell, "平凡规则-必安全", 0.0, 0.0),
                     }
                 )
 
@@ -263,9 +339,7 @@ class ExpertMinesweeperSolver:
                                 eq_used[neighbor_eq_idx] = True
                                 queue.append(neighbor_eq_idx)
 
-            blocks.append(
-                {"cells": list(current_block_cells), "equations": current_block_eqs}
-            )
+            blocks.append({"cells": list(current_block_cells), "equations": current_block_eqs})
 
         block_solutions = []
         for block in blocks:
@@ -339,9 +413,7 @@ class ExpertMinesweeperSolver:
                         dist_dict = {}
                         for r_val in range(9):
                             if cell_reveal_dists[mines, i, r_val] > 0:
-                                dist_dict[r_val] = int(
-                                    cell_reveal_dists[mines, i, r_val]
-                                )
+                                dist_dict[r_val] = int(cell_reveal_dists[mines, i, r_val])
                         if dist_dict:
                             data["cell_reveal_dist"][c] = dist_dict
                     res_dict[mines] = data
@@ -376,8 +448,7 @@ class ExpertMinesweeperSolver:
 
         if isolated_cells:
             iso_mine_configs = sum(
-                ways
-                * fast_comb(len(isolated_cells) - 1, remaining_mines - m_blocks - 1)
+                ways * fast_comb(len(isolated_cells) - 1, remaining_mines - m_blocks - 1)
                 for m_blocks, ways in all_blocks_dp.items()
                 if 1 <= remaining_mines - m_blocks <= len(isolated_cells)
             )
@@ -394,17 +465,12 @@ class ExpertMinesweeperSolver:
 
             for b_mines, b_data in b_sol.items():
                 valid_global_ways = sum(
-                    o_ways
-                    * fast_comb(
-                        len(isolated_cells), remaining_mines - (b_mines + o_mines)
-                    )
+                    o_ways * fast_comb(len(isolated_cells), remaining_mines - (b_mines + o_mines))
                     for o_mines, o_ways in other_dp.items()
                     if 0 <= remaining_mines - (b_mines + o_mines) <= len(isolated_cells)
                 )
                 for cell in b_cells:
-                    prob = (
-                        b_data["cell_mine_count"].get(cell, 0) * valid_global_ways
-                    ) / total_global_configs
+                    prob = (b_data["cell_mine_count"].get(cell, 0) * valid_global_ways) / total_global_configs
                     probabilities[cell] = probabilities.get(cell, 0.0) + prob
                     for v, count in b_data["cell_reveal_dist"].get(cell, {}).items():
                         global_reveal_dist[cell][v] += count * valid_global_ways
@@ -476,6 +542,9 @@ class ExpertMinesweeperSolver:
                     "info_gain": 0.0,
                     "calc_time": calc_time_ms,
                     "details": details,
+                    "debug": self._make_debug_info(
+                        board, cell, "全局枚举-必雷", 1.0, info_gains[cell], frontier_cells, isolated_cells
+                    ),
                 }
             )
         for cell in certain_safe:
@@ -487,6 +556,9 @@ class ExpertMinesweeperSolver:
                     "info_gain": 0.0,
                     "calc_time": calc_time_ms,
                     "details": details,
+                    "debug": self._make_debug_info(
+                        board, cell, "全局枚举-必安全", 0.0, info_gains[cell], frontier_cells, isolated_cells
+                    ),
                 }
             )
 
@@ -507,6 +579,15 @@ class ExpertMinesweeperSolver:
                 "info_gain": info_gains[best_guess],
                 "calc_time": calc_time_ms,
                 "details": details,
+                "debug": self._make_debug_info(
+                    board,
+                    best_guess,
+                    f"概率猜测-{guess_type}",
+                    probabilities[best_guess],
+                    info_gains[best_guess],
+                    frontier_cells,
+                    isolated_cells,
+                ),
                 "batch_info": (1, 1),
             }
         ]

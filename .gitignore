@@ -182,4 +182,5 @@ cython_debug/
 
 
 
-/templates_unknown
+dataset/train/
+dataset/error/
