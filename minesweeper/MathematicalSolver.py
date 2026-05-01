@@ -42,7 +42,6 @@ def _update_eq_state(c_idx, val, cell_to_eqs, cell_eq_counts, eq_targets, eq_una
         eq_unassigned[eq_idx] -= 1
         if val == 1:
             eq_current_mines[eq_idx] += 1
-
         if eq_current_mines[eq_idx] > eq_targets[eq_idx]:
             is_valid = False
         if eq_current_mines[eq_idx] + eq_unassigned[eq_idx] < eq_targets[eq_idx]:
@@ -130,11 +129,9 @@ class ExpertMinesweeperSolver:
         self.cols = cols
         self.total_mines = total_mines
         self._is_jitted = False
-        # 每次 solve_step 调用后填充：疑似误识别格子坐标及其识别值
-        # 格式: list of (row, col, detected_value)
         self.suspicious_cells: list[tuple] = []
-
         self.neighbor_map = {}
+
         for r in range(self.rows):
             for c in range(self.cols):
                 neighbors = []
@@ -192,6 +189,7 @@ class ExpertMinesweeperSolver:
 
     def _validate_cell_neighbors(self, r, c, val, local_flags, unknowns):
         """Validate cell neighbors for inconsistencies."""
+
         if local_flags > val:
             print(
                 f"⚠️  [识别警告] ({r},{c}) 数字={val} 但周围旗帜已达 {local_flags} 个，疑似误识别，已跳过",
@@ -210,6 +208,7 @@ class ExpertMinesweeperSolver:
 
     def _process_cell_equation(self, unknowns, target, equations, frontier_cells, trivial_safe, trivial_mine):
         """Process equation based on target and unknowns."""
+
         if target == 0:
             trivial_safe.update(unknowns)
         elif target == len(unknowns):
@@ -220,26 +219,27 @@ class ExpertMinesweeperSolver:
 
     def _process_board_cell(self, board, r, c, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells):
         """Process a single board cell and extract equations/trivialities."""
+
         val = board[r][c]
         if val == "F" or val == -1 or not (isinstance(val, int) and val > 0):
             if val == -1:
                 unknown_cells.add((r, c))
-            return True
+            return
 
         unknowns, local_flags = self._collect_cell_neighbors_info(board, r, c)
 
         if not unknowns:
-            return True
+            return
 
         if not self._validate_cell_neighbors(r, c, val, local_flags, unknowns):
-            return True
+            return
 
         target = val - local_flags
         self._process_cell_equation(unknowns, target, equations, frontier_cells, trivial_safe, trivial_mine)
-        return True
 
     def _build_equation_blocks(self, equations):
         """Build connected components of equations and cells."""
+
         cell_to_eq_indices = defaultdict(list)
         for i, eq in enumerate(equations):
             for cell in eq["cells"]:
@@ -272,6 +272,7 @@ class ExpertMinesweeperSolver:
 
     def _compute_block_solution(self, block):
         """Compute DFS-based solution for a single block."""
+
         b_cells = block["cells"]
         b_eqs = block["equations"]
         num_cells = len(b_cells)
@@ -455,6 +456,7 @@ class ExpertMinesweeperSolver:
 
     def _scan_board_for_equations(self, board, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells):
         """Scan board and extract equations, trivialities, and collect cell classifications."""
+
         flag_count = 0
         for r in range(self.rows):
             for c in range(self.cols):
@@ -464,11 +466,15 @@ class ExpertMinesweeperSolver:
                 elif val == -1:
                     unknown_cells.add((r, c))
                 elif isinstance(val, int) and val > 0:
-                    self._process_board_cell(board, r, c, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells)
+                    self._process_board_cell(
+                        board, r, c, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells
+                    )
+
         return flag_count
 
     def _build_blocks_from_equations(self, equations):
         """Build connected components (blocks) from equations."""
+
         cell_to_eq_indices = defaultdict(list)
         for i, eq in enumerate(equations):
             for cell in eq["cells"]:
@@ -497,6 +503,7 @@ class ExpertMinesweeperSolver:
                                 queue.append(neighbor_eq_idx)
 
             blocks.append({"cells": list(current_block_cells), "equations": current_block_eqs})
+
         return blocks
 
     def solve_step(self, board):
@@ -538,7 +545,9 @@ class ExpertMinesweeperSolver:
         trivial_safe = set()
         trivial_mine = set()
 
-        flag_count = self._scan_board_for_equations(board, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells)
+        flag_count = self._scan_board_for_equations(
+            board, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells
+        )
 
         remaining_mines = self.total_mines - flag_count
         if remaining_mines < 0:
@@ -589,6 +598,7 @@ class ExpertMinesweeperSolver:
             total_d = len(decisions)
             for idx, d in enumerate(decisions):
                 d["batch_info"] = (idx + 1, total_d)
+
             return decisions
 
         isolated_cells = unknown_cells - frontier_cells
@@ -655,7 +665,7 @@ class ExpertMinesweeperSolver:
                 for n in self.get_neighbors(*c):
                     if n in cell_to_idx:
                         cell_neighbors_matrix[i, cell_to_idx[n]] = 1
-            
+
             cell_eq_count = dict.fromkeys(b_cells, 0)
 
             max_mines = num_cells + 1

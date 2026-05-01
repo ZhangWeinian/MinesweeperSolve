@@ -30,19 +30,21 @@ C = Colors
 def _cell_symbol_and_color(val):
     if val == -1:
         return "U", C.CYAN
-    if val == 0:
+    elif val == 0:
         return "O", C.RESET
-    if val == "F":
+    elif val == "F":
         return "F", C.RED
-    return str(val), C.BLACK
+    else:
+        return str(val), C.BLACK
 
 
 def _action_marker_color(action_type):
     if action_type == "CLICK":
         return C.GREEN
-    if action_type == "FLAG":
+    elif action_type == "FLAG":
         return C.RED
-    return C.MAGENTA
+    else:
+        return C.MAGENTA
 
 
 def get_visual_length(s):
@@ -54,6 +56,7 @@ def get_visual_length(s):
             length += 2
         else:
             length += 1
+
     return length
 
 
@@ -123,6 +126,7 @@ def print_board_matrix_for_debug(board):
 
 def get_local_grid_str(board, action_type, center_r, center_c, radius=2):
     """生成 5×5 的局部战术沙盘视图。"""
+
     rows = len(board)
     cols = len(board[0])
     lines = []

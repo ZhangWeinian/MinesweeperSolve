@@ -12,9 +12,11 @@ MAX_TRAIN_PER_CLASS = 1000
 
 def _label_to_folder(label) -> str:
     """将识别结果转换为数据集子目录名。"""
+
     if label == "F" or label == "flag":
         return "flag"
-    return str(label)
+    else:
+        return str(label)
 
 
 class DatasetCollector:
@@ -25,7 +27,6 @@ class DatasetCollector:
         self._train_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._saved_positions: set[tuple] = set()
-
         self._init_counts()
 
     def _init_counts(self) -> None:
@@ -51,6 +52,7 @@ class DatasetCollector:
         with self._lock:
             if key in self._saved_positions:
                 return False
+
             count = self._train_counts.get(folder_name, 0)
             if count >= MAX_TRAIN_PER_CLASS:
                 return False
@@ -62,11 +64,11 @@ class DatasetCollector:
 
             self._train_counts[folder_name] = count + 1
             self._saved_positions.add(key)
+
             return True
 
     def save_error(self, cell_img_bgr, label) -> None:
         folder_name = _label_to_folder(label)
-
         with self._lock:
             count = self._error_counts.get(folder_name, 0)
             save_dir = DATASET_ERROR_DIR / folder_name

@@ -12,6 +12,7 @@ def binarize_cell(cell_img):
         - binary_mask: 前景掩码 (uint8)，None 表示空白或未翻开
         - is_opened: True = 已翻开格
     """
+
     hsv = cv2.cvtColor(cell_img, cv2.COLOR_BGR2HSV)
     center_hsv = hsv[12:52, 12:52]
     median_s = np.median(center_hsv[:, :, 1])
@@ -55,5 +56,5 @@ def binarize_cell(cell_img):
 
         if np.count_nonzero(binary) < 80:
             return None, True
-
-        return binary, True
+        else:
+            return binary, True

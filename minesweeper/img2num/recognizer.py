@@ -28,6 +28,7 @@ class CellRecognizer:
     def __init__(self, model_path, meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
+
         self.idx_to_class: dict[int, str] = {int(k): v for k, v in meta.items()}
         num_classes = len(self.idx_to_class)
 
@@ -39,15 +40,13 @@ class CellRecognizer:
 
         print(f"✅ [CNN 识别引擎] 模型已加载，设备: {self.device}，类别数: {num_classes}")
 
-    def load_templates(self) -> None:
-        """兼容旧接口的空方法，CNN 模式下无需重载模板。"""
-
     def _cnn_predict(self, cell_img_bgr: np.ndarray) -> str:
         """对 BGR numpy 格子图像运行 CNN 推理。
 
         Returns:
             类别字符串，"1"-"8" 或 "flag"
         """
+
         # BGR → RGB → PIL Image
         rgb = cell_img_bgr[:, :, ::-1].copy()
         pil_img = Image.fromarray(rgb.astype(np.uint8))
@@ -67,6 +66,7 @@ class CellRecognizer:
         Returns:
             int (0-8) | "F" | -1 (未翻开)
         """
+
         shape, is_opened = binarize_cell(cell_img)
 
         if not is_opened:
@@ -80,4 +80,5 @@ class CellRecognizer:
         label = self._cnn_predict(cell_img)
         if label == "flag":
             return "F"
-        return int(label)  # "1"-"8" → 1-8
+        else:
+            return int(label)  # "1"-"8" → 1-8

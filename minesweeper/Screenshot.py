@@ -33,6 +33,7 @@ class ScreenCapture:
 
     def grab_frame(self):
         """截取当前屏幕帧，返回 BGR numpy 数组。"""
+
         sct_img = self.sct.grab(self.monitor)
         return np.array(sct_img)[:, :, :3]
 
@@ -73,6 +74,7 @@ class ScreenCapture:
 
     def calibrate(self):
         """双锚点校准：用户点击左上角和右下角格子来建立网格映射。"""
+
         print("\n" + "=" * 60)
         print("🎯 【全景双锚点光学纠偏引擎】")
         print("👉 1. 将鼠标停留在【第一行、第一列】格子上，按 'F4'")
@@ -135,12 +137,15 @@ class ScreenCapture:
 
     def get_cell_center(self, r: int, c: int) -> tuple[int, int] | None:
         """返回格子 (r, c) 的屏幕中心坐标 (x, y)；未校准时返回 None。"""
+
         cell = self.grid_map[r][c]
         if cell is None:
             return None
-        return cell["cx"], cell["cy"]
+        else:
+            return cell["cx"], cell["cy"]
 
     def get_cell_image(self, frame, r: int, c: int):
         """从截图帧中裁切出格子 (r, c) 的图像副本（BGR numpy 数组）。"""
+
         y1, y2, x1, x2 = self.grid_map[r][c]["slice"]
         return frame[y1:y2, x1:x2].copy()
