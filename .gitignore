@@ -180,7 +180,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-
-
-dataset/train/
-dataset/error/
+# 排除训练数据文件
+src/dataset/test
+src/dataset/train
+src/dataset/error

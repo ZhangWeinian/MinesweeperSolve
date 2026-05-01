@@ -5,8 +5,8 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from .model import MinesweeperCNN
-from .preprocessor import binarize_cell
+from src.export import MinesweeperCNN
+from src.app.manager.img2num.preprocessor import binarize_cell
 
 _TRANSFORM = transforms.Compose(
     [

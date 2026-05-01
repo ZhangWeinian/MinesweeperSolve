@@ -3,10 +3,6 @@ from pathlib import Path
 
 import cv2
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-
-DATASET_TRAIN_DIR = _PROJECT_ROOT / "dataset" / "train"
-DATASET_ERROR_DIR = _PROJECT_ROOT / "dataset" / "error"
 MAX_TRAIN_PER_CLASS = 1000
 
 
@@ -22,7 +18,9 @@ def _label_to_folder(label) -> str:
 class DatasetCollector:
     """线程安全的训练/错误样本采集器。"""
 
-    def __init__(self):
+    def __init__(self, root_path: Path):
+        self._train_dir = root_path / "src" / "dataset" / "train"
+        self._error_dir = root_path / "src" / "dataset" / "error"
         self._lock = threading.Lock()
         self._train_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
@@ -30,14 +28,14 @@ class DatasetCollector:
         self._init_counts()
 
     def _init_counts(self) -> None:
-        DATASET_TRAIN_DIR.mkdir(parents=True, exist_ok=True)
-        DATASET_ERROR_DIR.mkdir(parents=True, exist_ok=True)
+        self._train_dir.mkdir(parents=True, exist_ok=True)
+        self._error_dir.mkdir(parents=True, exist_ok=True)
 
-        for folder in DATASET_TRAIN_DIR.iterdir():
+        for folder in self._train_dir.iterdir():
             if folder.is_dir():
                 self._train_counts[folder.name] = len(list(folder.glob("*.png")))
 
-        for folder in DATASET_ERROR_DIR.iterdir():
+        for folder in self._error_dir.iterdir():
             if folder.is_dir():
                 self._error_counts[folder.name] = len(list(folder.glob("*.png")))
 
@@ -57,7 +55,7 @@ class DatasetCollector:
             if count >= MAX_TRAIN_PER_CLASS:
                 return False
 
-            save_dir = DATASET_TRAIN_DIR / folder_name
+            save_dir = self._train_dir / folder_name
             save_dir.mkdir(parents=True, exist_ok=True)
             out_path = save_dir / f"{count:04d}.png"
             cv2.imwrite(str(out_path), cell_img_bgr)
@@ -71,7 +69,7 @@ class DatasetCollector:
         folder_name = _label_to_folder(label)
         with self._lock:
             count = self._error_counts.get(folder_name, 0)
-            save_dir = DATASET_ERROR_DIR / folder_name
+            save_dir = self._error_dir / folder_name
             save_dir.mkdir(parents=True, exist_ok=True)
             out_path = save_dir / f"{count:04d}.png"
             cv2.imwrite(str(out_path), cell_img_bgr)

@@ -6,12 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 import psutil
 import pyautogui
 
-from img2num import CellRecognizer, DatasetCollector
-from minesweeper.MouseController import BotState, click, right_click, start_keyboard_listener
-from minesweeper.TerminalPrint import Colors as C
-from minesweeper.TerminalPrint import get_local_grid_str, print_board_matrix_for_debug, print_boxed_report
-from Screenshot import ScreenCapture
-from minesweeper.MathematicalSolver import ExpertMinesweeperSolver
+from src.app.manager.img2num import CellRecognizer, DatasetCollector
+from src.app.manager.MouseController import BotState, click, right_click, start_keyboard_listener
+from src.app.manager.TerminalPrint import Colors as C
+from src.app.manager.TerminalPrint import get_local_grid_str, print_board_matrix_for_debug, print_boxed_report
+from src.app.manager.Screenshot import ScreenCapture
+from src.app.manager.MathematicalSolver import ExpertMinesweeperSolver
 
 pyautogui.PAUSE = 0.0
 
@@ -141,7 +141,7 @@ def _build_debug_section(board, decision):
     return lines
 
 
-def _init_bot_components(rows, cols, total_mines, model_path, meta_path):
+def _init_bot_components(rows, cols, total_mines, model_path, meta_path, root_path):
     """初始化所有核心组件并完成光学校准。"""
 
     intro_msg = [
@@ -154,7 +154,7 @@ def _init_bot_components(rows, cols, total_mines, model_path, meta_path):
     capture = ScreenCapture(rows=rows, cols=cols)
     recognizer = CellRecognizer(model_path, meta_path)
     solver = ExpertMinesweeperSolver(rows=rows, cols=cols, total_mines=total_mines)
-    collector = DatasetCollector()
+    collector = DatasetCollector(root_path)
 
     capture.calibrate()
 
@@ -374,9 +374,13 @@ def _handle_guess_action(decision, step_count, section_radar, details, board, ca
         time.sleep(0.2)
 
 
-def run_auto_bot(rows: int = 16, cols: int = 30, total_mines: int = 99, model_path=None, meta_path=None):
+def run_auto_bot(
+    rows: int = 16, cols: int = 30, total_mines: int = 99, model_path=None, meta_path=None, root_path=None
+):
     state = BotState()
-    capture, recognizer, solver, collector = _init_bot_components(rows, cols, total_mines, model_path, meta_path)
+    capture, recognizer, solver, collector = _init_bot_components(
+        rows, cols, total_mines, model_path, meta_path, root_path
+    )
 
     start_keyboard_listener(state)
 
