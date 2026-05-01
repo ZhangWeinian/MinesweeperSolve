@@ -16,6 +16,59 @@ def fast_comb(n, k):
 
 
 @njit(fastmath=True, cache=True)
+def _record_config(
+    num_cells, current_assignment, current_reveal_mines, config_counts, cell_mine_counts, cell_reveal_dists
+):
+    total_mines = 0
+    for i in range(num_cells):
+        if current_assignment[i] == 1:
+            total_mines += 1
+
+    for i in range(num_cells):
+        if current_assignment[i] == 1:
+            cell_mine_counts[total_mines, i] += 1
+        else:
+            local_mines = current_reveal_mines[i]
+            cell_reveal_dists[total_mines, i, local_mines] += 1
+
+    config_counts[total_mines] += 1
+
+
+@njit(fastmath=True, cache=True)
+def _update_eq_state(c_idx, val, cell_to_eqs, cell_eq_counts, eq_targets, eq_unassigned, eq_current_mines):
+    is_valid = True
+    for k in range(cell_eq_counts[c_idx]):
+        eq_idx = cell_to_eqs[c_idx, k]
+        eq_unassigned[eq_idx] -= 1
+        if val == 1:
+            eq_current_mines[eq_idx] += 1
+
+        if eq_current_mines[eq_idx] > eq_targets[eq_idx]:
+            is_valid = False
+        if eq_current_mines[eq_idx] + eq_unassigned[eq_idx] < eq_targets[eq_idx]:
+            is_valid = False
+
+    return is_valid
+
+
+@njit(fastmath=True, cache=True)
+def _revert_eq_state(c_idx, val, cell_to_eqs, cell_eq_counts, eq_unassigned, eq_current_mines):
+    for k in range(cell_eq_counts[c_idx]):
+        eq_idx = cell_to_eqs[c_idx, k]
+        eq_unassigned[eq_idx] += 1
+        if val == 1:
+            eq_current_mines[eq_idx] -= 1
+
+
+@njit(fastmath=True, cache=True)
+def _update_reveal_mines(c_idx, delta, num_cells, cell_neighbors_matrix, current_reveal_mines):
+    if delta != 0:
+        for j in range(num_cells):
+            if cell_neighbors_matrix[c_idx, j] == 1:
+                current_reveal_mines[j] += delta
+
+
+@njit(fastmath=True, cache=True)
 def dfs_numba(
     c_idx,
     num_cells,
@@ -32,41 +85,21 @@ def dfs_numba(
     cell_reveal_dists,
 ):
     if c_idx == num_cells:
-        total_mines = 0
-        for i in range(num_cells):
-            if current_assignment[i] == 1:
-                total_mines += 1
-
-        for i in range(num_cells):
-            if current_assignment[i] == 1:
-                cell_mine_counts[total_mines, i] += 1
-            else:
-                local_mines = current_reveal_mines[i]
-                cell_reveal_dists[total_mines, i, local_mines] += 1
-
-        config_counts[total_mines] += 1
+        _record_config(
+            num_cells, current_assignment, current_reveal_mines, config_counts, cell_mine_counts, cell_reveal_dists
+        )
         return
 
     for val in range(2):
         current_assignment[c_idx] = val
-        is_valid = True
 
-        for k in range(cell_eq_counts[c_idx]):
-            eq_idx = cell_to_eqs[c_idx, k]
-            eq_unassigned[eq_idx] -= 1
-            if val == 1:
-                eq_current_mines[eq_idx] += 1
-
-            if eq_current_mines[eq_idx] > eq_targets[eq_idx]:
-                is_valid = False
-            if eq_current_mines[eq_idx] + eq_unassigned[eq_idx] < eq_targets[eq_idx]:
-                is_valid = False
+        is_valid = _update_eq_state(
+            c_idx, val, cell_to_eqs, cell_eq_counts, eq_targets, eq_unassigned, eq_current_mines
+        )
 
         if is_valid:
-            if val == 1:
-                for j in range(num_cells):
-                    if cell_neighbors_matrix[c_idx, j] == 1:
-                        current_reveal_mines[j] += 1
+            delta = 1 if val == 1 else 0
+            _update_reveal_mines(c_idx, delta, num_cells, cell_neighbors_matrix, current_reveal_mines)
 
             dfs_numba(
                 c_idx + 1,
@@ -84,16 +117,9 @@ def dfs_numba(
                 cell_reveal_dists,
             )
 
-            if val == 1:
-                for j in range(num_cells):
-                    if cell_neighbors_matrix[c_idx, j] == 1:
-                        current_reveal_mines[j] -= 1
+            _update_reveal_mines(c_idx, -delta, num_cells, cell_neighbors_matrix, current_reveal_mines)
 
-        for k in range(cell_eq_counts[c_idx]):
-            eq_idx = cell_to_eqs[c_idx, k]
-            eq_unassigned[eq_idx] += 1
-            if val == 1:
-                eq_current_mines[eq_idx] -= 1
+        _revert_eq_state(c_idx, val, cell_to_eqs, cell_eq_counts, eq_unassigned, eq_current_mines)
 
     current_assignment[c_idx] = -1
 
@@ -153,6 +179,258 @@ class ExpertMinesweeperSolver:
         clues.sort(key=lambda item: (item["cell"][0], item["cell"][1]))
         return clues
 
+    def _collect_cell_neighbors_info(self, board, r, c):
+        """Collect unknowns and flags info for a cell."""
+        unknowns = []
+        local_flags = 0
+        for nr, nc in self.get_neighbors(r, c):
+            if board[nr][nc] == -1:
+                unknowns.append((nr, nc))
+            elif board[nr][nc] == "F":
+                local_flags += 1
+        return unknowns, local_flags
+
+    def _validate_cell_neighbors(self, r, c, val, local_flags, unknowns):
+        """Validate cell neighbors for inconsistencies."""
+        if local_flags > val:
+            print(
+                f"⚠️  [识别警告] ({r},{c}) 数字={val} 但周围旗帜已达 {local_flags} 个，疑似误识别，已跳过",
+                file=sys.stderr,
+            )
+            self.suspicious_cells.append((r, c, val))
+            return False
+        if val - local_flags > len(unknowns):
+            print(
+                f"⚠️  [识别警告] ({r},{c}) 数字={val} 但可用未知邻居仅 {len(unknowns)} 个，疑似误识别，已跳过",
+                file=sys.stderr,
+            )
+            self.suspicious_cells.append((r, c, val))
+            return False
+        return True
+
+    def _process_cell_equation(self, unknowns, target, equations, frontier_cells, trivial_safe, trivial_mine):
+        """Process equation based on target and unknowns."""
+        if target == 0:
+            trivial_safe.update(unknowns)
+        elif target == len(unknowns):
+            trivial_mine.update(unknowns)
+        else:
+            frontier_cells.update(unknowns)
+            equations.append({"cells": set(unknowns), "target": target})
+
+    def _process_board_cell(self, board, r, c, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells):
+        """Process a single board cell and extract equations/trivialities."""
+        val = board[r][c]
+        if val == "F" or val == -1 or not (isinstance(val, int) and val > 0):
+            if val == -1:
+                unknown_cells.add((r, c))
+            return True
+
+        unknowns, local_flags = self._collect_cell_neighbors_info(board, r, c)
+
+        if not unknowns:
+            return True
+
+        if not self._validate_cell_neighbors(r, c, val, local_flags, unknowns):
+            return True
+
+        target = val - local_flags
+        self._process_cell_equation(unknowns, target, equations, frontier_cells, trivial_safe, trivial_mine)
+        return True
+
+    def _build_equation_blocks(self, equations):
+        """Build connected components of equations and cells."""
+        cell_to_eq_indices = defaultdict(list)
+        for i, eq in enumerate(equations):
+            for cell in eq["cells"]:
+                cell_to_eq_indices[cell].append(i)
+
+        blocks = []
+        eq_used = [False] * len(equations)
+        for i in range(len(equations)):
+            if eq_used[i]:
+                continue
+            current_block_eqs = []
+            current_block_cells = set()
+            queue = [i]
+            eq_used[i] = True
+
+            while queue:
+                curr_idx = queue.pop(0)
+                curr_eq = equations[curr_idx]
+                current_block_eqs.append(curr_eq)
+                for c in curr_eq["cells"]:
+                    if c not in current_block_cells:
+                        current_block_cells.add(c)
+                        for neighbor_eq_idx in cell_to_eq_indices[c]:
+                            if not eq_used[neighbor_eq_idx]:
+                                eq_used[neighbor_eq_idx] = True
+                                queue.append(neighbor_eq_idx)
+
+            blocks.append({"cells": list(current_block_cells), "equations": current_block_eqs})
+        return blocks
+
+    def _compute_block_solution(self, block):
+        """Compute DFS-based solution for a single block."""
+        b_cells = block["cells"]
+        b_eqs = block["equations"]
+        num_cells = len(b_cells)
+        num_eqs = len(b_eqs)
+
+        cell_eq_count = dict.fromkeys(b_cells, 0)
+        for eq in b_eqs:
+            for c in eq["cells"]:
+                cell_eq_count[c] += 1
+        b_cells.sort(key=lambda c: -cell_eq_count[c])
+
+        cell_to_idx = {c: i for i, c in enumerate(b_cells)}
+
+        cell_to_eqs = np.full((num_cells, 8), -1, dtype=np.int32)
+        cell_eq_counts = np.zeros(num_cells, dtype=np.int32)
+        eq_targets = np.zeros(num_eqs, dtype=np.int8)
+        eq_unassigned = np.zeros(num_eqs, dtype=np.int8)
+
+        for i, eq in enumerate(b_eqs):
+            eq_targets[i] = eq["target"]
+            eq_unassigned[i] = len(eq["cells"])
+            for c in eq["cells"]:
+                c_idx = cell_to_idx[c]
+                cell_to_eqs[c_idx, cell_eq_counts[c_idx]] = i
+                cell_eq_counts[c_idx] += 1
+
+        cell_neighbors_matrix = np.zeros((num_cells, num_cells), dtype=np.int8)
+        for i, c in enumerate(b_cells):
+            for n in self.get_neighbors(*c):
+                if n in cell_to_idx:
+                    cell_neighbors_matrix[i, cell_to_idx[n]] = 1
+
+        max_mines = num_cells + 1
+        config_counts = np.zeros(max_mines, dtype=np.int64)
+        cell_mine_counts = np.zeros((max_mines, num_cells), dtype=np.int64)
+        cell_reveal_dists = np.zeros((max_mines, num_cells, 9), dtype=np.int64)
+        eq_current_mines = np.zeros(num_eqs, dtype=np.int8)
+        current_assignment = np.full(num_cells, -1, dtype=np.int8)
+        current_reveal_mines = np.zeros(num_cells, dtype=np.int8)
+
+        dfs_numba(
+            0,
+            num_cells,
+            cell_to_eqs,
+            cell_eq_counts,
+            eq_targets,
+            cell_neighbors_matrix,
+            eq_unassigned,
+            eq_current_mines,
+            current_assignment,
+            current_reveal_mines,
+            config_counts,
+            cell_mine_counts,
+            cell_reveal_dists,
+        )
+
+        res_dict = {}
+        for mines in range(max_mines):
+            if config_counts[mines] > 0:
+                data = {
+                    "config_count": int(config_counts[mines]),
+                    "cell_mine_count": {},
+                    "cell_reveal_dist": {},
+                }
+                for i, c in enumerate(b_cells):
+                    if cell_mine_counts[mines, i] > 0:
+                        data["cell_mine_count"][c] = int(cell_mine_counts[mines, i])
+                    dist_dict = {}
+                    for r_val in range(9):
+                        if cell_reveal_dists[mines, i, r_val] > 0:
+                            dist_dict[r_val] = int(cell_reveal_dists[mines, i, r_val])
+                    if dist_dict:
+                        data["cell_reveal_dist"][c] = dist_dict
+                res_dict[mines] = data
+        return res_dict
+
+    def _compute_probabilities(self, block_solutions, blocks, frontier_cells, isolated_cells, remaining_mines):
+        """Compute cell probabilities from block solutions."""
+
+        def get_dp_combinations(blocks_to_use):
+            dp = {0: 1}
+            for b_sol in blocks_to_use:
+                new_dp = defaultdict(int)
+                for prev_mines, prev_ways in dp.items():
+                    for b_mines, b_data in b_sol.items():
+                        total_m = prev_mines + b_mines
+                        if total_m <= remaining_mines:
+                            new_dp[total_m] += prev_ways * b_data["config_count"]
+                dp = new_dp
+            return dp
+
+        all_blocks_dp = get_dp_combinations(block_solutions)
+        total_global_configs = sum(
+            ways * fast_comb(len(isolated_cells), remaining_mines - m_blocks)
+            for m_blocks, ways in all_blocks_dp.items()
+            if 0 <= remaining_mines - m_blocks <= len(isolated_cells)
+        )
+
+        if total_global_configs == 0:
+            raise ValueError("数学矛盾，盘面无解！")
+
+        probabilities = {}
+        info_gains = defaultdict(float)
+        exp_remaining = defaultdict(float)
+        global_reveal_dist = defaultdict(lambda: defaultdict(int))
+
+        if isolated_cells:
+            iso_mine_configs = sum(
+                ways * fast_comb(len(isolated_cells) - 1, remaining_mines - m_blocks - 1)
+                for m_blocks, ways in all_blocks_dp.items()
+                if 1 <= remaining_mines - m_blocks <= len(isolated_cells)
+            )
+            iso_prob = iso_mine_configs / total_global_configs
+            for c in isolated_cells:
+                probabilities[c] = iso_prob
+                info_gains[c] = 0.0
+                exp_remaining[c] = total_global_configs
+
+        for i, b_sol in enumerate(block_solutions):
+            other_blocks = block_solutions[:i] + block_solutions[i + 1 :]
+            other_dp = get_dp_combinations(other_blocks)
+            b_cells = blocks[i]["cells"]
+
+            for b_mines, b_data in b_sol.items():
+                valid_global_ways = sum(
+                    o_ways * fast_comb(len(isolated_cells), remaining_mines - (b_mines + o_mines))
+                    for o_mines, o_ways in other_dp.items()
+                    if 0 <= remaining_mines - (b_mines + o_mines) <= len(isolated_cells)
+                )
+                for cell in b_cells:
+                    prob = (b_data["cell_mine_count"].get(cell, 0) * valid_global_ways) / total_global_configs
+                    probabilities[cell] = probabilities.get(cell, 0.0) + prob
+                    for v, count in b_data["cell_reveal_dist"].get(cell, {}).items():
+                        global_reveal_dist[cell][v] += count * valid_global_ways
+
+        for cell in frontier_cells:
+            dist = global_reveal_dist[cell]
+            total_safe_configs = sum(dist.values())
+
+            if total_safe_configs > 0:
+                entropy = 0.0
+                expected_rem = 0.0
+                for v, count in dist.items():
+                    p_v = count / total_safe_configs
+                    if p_v > 0:
+                        expected_rem += p_v * count
+                        v_entropy = -(p_v * math.log2(p_v))
+                        if v == 0:
+                            v_entropy *= 1.5
+                        entropy += v_entropy
+
+                info_gains[cell] = entropy
+                exp_remaining[cell] = expected_rem
+            else:
+                info_gains[cell] = 0.0
+                exp_remaining[cell] = total_global_configs
+
+        return probabilities, info_gains, exp_remaining, total_global_configs
+
     def _make_debug_info(self, board, cell, source, mine_prob, info_gain, frontier_cells=None, isolated_cells=None):
         frontier_cells = frontier_cells or set()
         isolated_cells = isolated_cells or set()
@@ -174,6 +452,52 @@ class ExpertMinesweeperSolver:
             "support_clues": len(clue_details),
             "clues": clue_details,
         }
+
+    def _scan_board_for_equations(self, board, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells):
+        """Scan board and extract equations, trivialities, and collect cell classifications."""
+        flag_count = 0
+        for r in range(self.rows):
+            for c in range(self.cols):
+                val = board[r][c]
+                if val == "F":
+                    flag_count += 1
+                elif val == -1:
+                    unknown_cells.add((r, c))
+                elif isinstance(val, int) and val > 0:
+                    self._process_board_cell(board, r, c, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells)
+        return flag_count
+
+    def _build_blocks_from_equations(self, equations):
+        """Build connected components (blocks) from equations."""
+        cell_to_eq_indices = defaultdict(list)
+        for i, eq in enumerate(equations):
+            for cell in eq["cells"]:
+                cell_to_eq_indices[cell].append(i)
+
+        blocks = []
+        eq_used = [False] * len(equations)
+        for i in range(len(equations)):
+            if eq_used[i]:
+                continue
+            current_block_eqs = []
+            current_block_cells = set()
+            queue = [i]
+            eq_used[i] = True
+
+            while queue:
+                curr_idx = queue.pop(0)
+                curr_eq = equations[curr_idx]
+                current_block_eqs.append(curr_eq)
+                for c in curr_eq["cells"]:
+                    if c not in current_block_cells:
+                        current_block_cells.add(c)
+                        for neighbor_eq_idx in cell_to_eq_indices[c]:
+                            if not eq_used[neighbor_eq_idx]:
+                                eq_used[neighbor_eq_idx] = True
+                                queue.append(neighbor_eq_idx)
+
+            blocks.append({"cells": list(current_block_cells), "equations": current_block_eqs})
+        return blocks
 
     def solve_step(self, board):
         if not self._is_jitted:
@@ -210,54 +534,11 @@ class ExpertMinesweeperSolver:
 
         equations = []
         frontier_cells = set()
-        flag_count = 0
         unknown_cells = set()
         trivial_safe = set()
         trivial_mine = set()
 
-        for r in range(self.rows):
-            for c in range(self.cols):
-                val = board[r][c]
-                if val == "F":
-                    flag_count += 1
-                elif val == -1:
-                    unknown_cells.add((r, c))
-                elif isinstance(val, int) and val > 0:
-                    unknowns = []
-                    local_flags = 0
-                    for nr, nc in self.get_neighbors(r, c):
-                        if board[nr][nc] == -1:
-                            unknowns.append((nr, nc))
-                        elif board[nr][nc] == "F":
-                            local_flags += 1
-
-                    # 标记数超过数值 → 误识别，无论是否有未知邻居都跳过
-                    if local_flags > val:
-                        print(
-                            f"⚠️  [识别警告] ({r},{c}) 数字={val} 但周围旗帜已达 {local_flags} 个，疑似误识别，已跳过",
-                            file=sys.stderr,
-                        )
-                        self.suspicious_cells.append((r, c, val))
-                        continue
-
-                    if unknowns:
-                        target = val - local_flags
-                        if target > len(unknowns):
-                            # CNN 误识别：数字超出可用未知格数，忽略该约束并记录可疑格子
-                            print(
-                                f"⚠️  [识别警告] ({r},{c}) 数字={val} 但可用未知邻居仅 {len(unknowns)} 个，疑似误识别，已跳过",
-                                file=sys.stderr,
-                            )
-                            self.suspicious_cells.append((r, c, val))
-                            continue
-
-                        if target == 0:
-                            trivial_safe.update(unknowns)
-                        elif target == len(unknowns):
-                            trivial_mine.update(unknowns)
-                        else:
-                            frontier_cells.update(unknowns)
-                            equations.append({"cells": set(unknowns), "target": target})
+        flag_count = self._scan_board_for_equations(board, equations, frontier_cells, trivial_safe, trivial_mine, unknown_cells)
 
         remaining_mines = self.total_mines - flag_count
         if remaining_mines < 0:
@@ -348,11 +629,11 @@ class ExpertMinesweeperSolver:
             num_cells = len(b_cells)
             num_eqs = len(b_eqs)
 
-            cell_eq_count = {c: 0 for c in b_cells}
+            cell_eq_count = dict.fromkeys(b_cells, 0)
             for eq in b_eqs:
                 for c in eq["cells"]:
                     cell_eq_count[c] += 1
-            b_cells.sort(key=lambda c: -cell_eq_count[c])
+            b_cells.sort(key=lambda c, cec=cell_eq_count: -cec[c])
 
             cell_to_idx = {c: i for i, c in enumerate(b_cells)}
 
@@ -374,6 +655,8 @@ class ExpertMinesweeperSolver:
                 for n in self.get_neighbors(*c):
                     if n in cell_to_idx:
                         cell_neighbors_matrix[i, cell_to_idx[n]] = 1
+            
+            cell_eq_count = dict.fromkeys(b_cells, 0)
 
             max_mines = num_cells + 1
             config_counts = np.zeros(max_mines, dtype=np.int64)

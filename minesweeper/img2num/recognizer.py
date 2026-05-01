@@ -5,8 +5,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from ..config import CNN_META_PATH, CNN_MODEL_PATH
-from .cnn_model import MinesweeperCNN
+from .model import MinesweeperCNN
 from .preprocessor import binarize_cell
 
 _TRANSFORM = transforms.Compose(
@@ -26,15 +25,15 @@ class CellRecognizer:
     2. 仅对"有内容"的已翻开格子调用 CNN 推理
     """
 
-    def __init__(self):
-        with open(CNN_META_PATH) as f:
+    def __init__(self, model_path, meta_path):
+        with open(meta_path) as f:
             meta = json.load(f)
         self.idx_to_class: dict[int, str] = {int(k): v for k, v in meta.items()}
         num_classes = len(self.idx_to_class)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = MinesweeperCNN(num_classes=num_classes)
-        self.model.load_state_dict(torch.load(CNN_MODEL_PATH, map_location=self.device, weights_only=True))
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
         self.model.to(self.device)
         self.model.eval()
 

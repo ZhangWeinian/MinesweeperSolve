@@ -6,8 +6,6 @@ import mss
 import numpy as np
 from pynput import keyboard
 
-from ..config import CELL_SIZE, COLS, ROWS
-
 
 def _get_physical_mouse_pos():
     """通过 Win32 API 获取物理鼠标坐标（绕过 DPI 缩放）。"""
@@ -23,9 +21,10 @@ def _get_physical_mouse_pos():
 class ScreenCapture:
     """屏幕截图 + 双锚点校准 + 网格坐标映射。"""
 
-    def __init__(self, rows=ROWS, cols=COLS):
+    def __init__(self, rows: int, cols: int, cell_size: int = 64):
         self.rows = rows
         self.cols = cols
+        self.cell_size = cell_size
         self.grid_map: list[list[Any]] = [[None for _ in range(cols)] for _ in range(rows)]
         self.sct = mss.mss()
         self.offset_x = 0
@@ -113,7 +112,7 @@ class ScreenCapture:
 
         print(f"📐 物理校准完毕 -> 步长 X: {step_x:.4f}px | 步长 Y: {step_y:.4f}px")
 
-        half_s = CELL_SIZE // 2
+        half_s = self.cell_size // 2
 
         for r in range(self.rows):
             for c in range(self.cols):
@@ -133,3 +132,15 @@ class ScreenCapture:
                         rel_cx + half_s,
                     ),
                 }
+
+    def get_cell_center(self, r: int, c: int) -> tuple[int, int] | None:
+        """返回格子 (r, c) 的屏幕中心坐标 (x, y)；未校准时返回 None。"""
+        cell = self.grid_map[r][c]
+        if cell is None:
+            return None
+        return cell["cx"], cell["cy"]
+
+    def get_cell_image(self, frame, r: int, c: int):
+        """从截图帧中裁切出格子 (r, c) 的图像副本（BGR numpy 数组）。"""
+        y1, y2, x1, x2 = self.grid_map[r][c]["slice"]
+        return frame[y1:y2, x1:x2].copy()
