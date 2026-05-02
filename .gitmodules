@@ -1,3 +1,6 @@
-[submodule "CodeFormatFile"]
-	path = CodeFormatFile
+[submodule ".format"]
+	path = .format
 	url = git@github.com:ZhangWeinian/CodeFormatFile.git
+[submodule ".claude-md"]
+	path = .claude-md
+	url = git@github.com:forrestchang/andrej-karpathy-skills.git
