@@ -3,6 +3,7 @@ import sys
 import time
 from collections import defaultdict
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
 from numba import njit
@@ -332,7 +333,7 @@ class ExpertMinesweeperSolver:
         res_dict = {}
         for mines in range(max_mines):
             if config_counts[mines] > 0:
-                data = {
+                data: dict[str, Any] = {
                     "config_count": int(config_counts[mines]),
                     "cell_mine_count": {},
                     "cell_reveal_dist": {},
@@ -695,7 +696,7 @@ class ExpertMinesweeperSolver:
             res_dict = {}
             for mines in range(max_mines):
                 if config_counts[mines] > 0:
-                    data = {
+                    data: dict[str, Any] = {
                         "config_count": int(config_counts[mines]),
                         "cell_mine_count": {},
                         "cell_reveal_dist": {},
