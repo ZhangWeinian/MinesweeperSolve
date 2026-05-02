@@ -184,3 +184,6 @@ cython_debug/
 src/dataset/test
 src/dataset/train
 src/dataset/error
+
+# 排除 VSCode 文件夹级设置
+.vscode/settings.json
