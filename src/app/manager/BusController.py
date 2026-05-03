@@ -6,12 +6,21 @@ from concurrent.futures import ThreadPoolExecutor
 import psutil
 import pyautogui
 
-from src.app.manager.img2num import CellRecognizer, DatasetCollector
-from src.app.manager.MouseController import BotState, click, right_click, start_keyboard_listener
-from src.app.manager.TerminalPrint import Colors as C
-from src.app.manager.TerminalPrint import get_local_grid_str, print_board_matrix_for_debug, print_boxed_report
-from src.app.manager.Screenshot import ScreenCapture
+from src.app.manager.img2num import CellRecognizer, ConsistencyChecker, DatasetCollector
 from src.app.manager.MathematicalSolver import ExpertMinesweeperSolver
+from src.app.manager.MouseController import (
+    BotState,
+    click,
+    right_click,
+    start_keyboard_listener,
+)
+from src.app.manager.Screenshot import ScreenCapture
+from src.app.manager.TerminalPrint import Colors as C
+from src.app.manager.TerminalPrint import (
+    get_local_grid_str,
+    print_board_matrix_for_debug,
+    print_boxed_report,
+)
 
 pyautogui.PAUSE = 0.0
 
@@ -21,42 +30,61 @@ _MAX_SCAN_WORKERS = min(8, os.cpu_count() or 4)
 
 
 def _recognize_row(capture, recognizer, img_np, row):
-    """处理单行所有格子的识别（线程安全：仅读取 numpy + cv2 运算）。"""
+    """处理单行所有格子的识别"""
+
+    cell_imgs = [capture.get_cell_image(img_np, row, c) for c in range(capture.cols)]
+    row_results = recognizer.analyze_row(cell_imgs)
 
     results = []
-    for c in range(capture.cols):
-        cell_img = capture.get_cell_image(img_np, row, c)
-        results.append((row, c, recognizer.identify(cell_img), cell_img))
+    for c, (val, conf) in enumerate(row_results):
+        results.append((row, c, val, conf, cell_imgs[c]))
 
     return results
 
 
-def _scan_full_board(capture, recognizer, state, collector=None):
-    """扫描完整棋盘，返回 (board, stats, cell_images)。"""
+def _scan_full_board(
+    capture, recognizer, state, collector, consistency_checker, stable_board
+):
+    """扫描完整棋盘，结合跨帧一致性校验，返回稳定的新棋盘"""
+
     if state.stop:
         os._exit(0)
 
     img_np = capture.grab_frame()
     all_results = []
     with ThreadPoolExecutor(max_workers=_MAX_SCAN_WORKERS) as pool:
-        futures = [pool.submit(_recognize_row, capture, recognizer, img_np, r) for r in range(capture.rows)]
+        futures = [
+            pool.submit(_recognize_row, capture, recognizer, img_np, r)
+            for r in range(capture.rows)
+        ]
         for f in futures:
             all_results.extend(f.result())
 
-    board = [[-1] * capture.cols for _ in range(capture.rows)]
+    new_board = [
+        [stable_board[r][c] for c in range(capture.cols)] for r in range(capture.rows)
+    ]
     stats = {"blind": 0, "blank": 0, "flag": 0, "number": 0}
     cell_images: dict[tuple, object] = {}
 
-    for r, c, result, cell_img in all_results:
+    for r, c, val, conf, cell_img in all_results:
         if state.stop:
             os._exit(0)
 
-        board[r][c] = result
-        if result == -1:
+        final_val = val
+        if conf > 0:
+            checked_val, is_stable = consistency_checker.check((r, c), val, conf)
+            if is_stable:
+                final_val = checked_val
+            else:
+                final_val = new_board[r][c]
+
+        new_board[r][c] = final_val
+
+        if final_val == -1:
             stats["blind"] += 1
-        elif result == 0:
+        elif final_val == 0:
             stats["blank"] += 1
-        elif result == "F":
+        elif final_val == "F":
             stats["flag"] += 1
             cell_images[(r, c)] = cell_img
             if collector is not None:
@@ -65,9 +93,9 @@ def _scan_full_board(capture, recognizer, state, collector=None):
             stats["number"] += 1
             cell_images[(r, c)] = cell_img
             if collector is not None:
-                collector.try_save_train(cell_img, result, (r, c))
+                collector.try_save_train(cell_img, final_val, (r, c))
 
-    return board, stats, cell_images
+    return new_board, stats, cell_images
 
 
 def _count_numeric_neighbors(board, cell):
@@ -185,7 +213,9 @@ def _check_win_conditions(stats, total_mines, collector):
         return False
 
 
-def _resolve_next_decision(board, execution_queue, solver, cell_images, collector, state):
+def _resolve_next_decision(
+    board, execution_queue, solver, cell_images, collector, state
+):
     """处理执行队列或请求求解器计算下一步。返回 decision 或 None(表示遇到错误需跳过)。"""
 
     while execution_queue and board[execution_queue[0]["cell"]] != -1:
@@ -246,13 +276,19 @@ def _format_radar_section(stats, calc_time, details):
     ]
 
 
-def _handle_deterministic_action(decision, step_count, section_radar, details, board, capture):
+def _handle_deterministic_action(
+    decision, step_count, section_radar, details, board, capture
+):
     """处理 CLICK 和 FLAG 的 UI 渲染与物理执行。"""
     action = decision["action"]
     r, c = decision["cell"]
     batch_idx, batch_total = decision["batch_info"]
 
-    batch_str = f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}" if batch_total > 1 else ""
+    batch_str = (
+        f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}"
+        if batch_total > 1
+        else ""
+    )
     title = f"{C.BOLD}[回合 {step_count:03d}]{C.RESET}{batch_str}"
 
     section_action = []
@@ -299,13 +335,26 @@ def _handle_deterministic_action(decision, step_count, section_radar, details, b
     time.sleep(ACTION_DELAY_SECONDS)
 
 
-def _handle_guess_action(decision, step_count, section_radar, details, board, capture, state):
+def _handle_guess_action(
+    decision,
+    step_count,
+    section_radar,
+    details,
+    board,
+    capture,
+    state,
+    consistency_checker,
+):
     """处理 GUESS 的 UI 渲染、挂起等待与人工接管逻辑。"""
 
     r, c = decision["cell"]
     batch_idx, batch_total = decision["batch_info"]
 
-    batch_str = f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}" if batch_total > 1 else ""
+    batch_str = (
+        f" {C.YELLOW}  ⚡[连击 {batch_idx}/{batch_total}]{C.RESET}"
+        if batch_total > 1
+        else ""
+    )
     title = f"{C.BOLD}[回合 {step_count:03d}]{C.RESET}{batch_str}"
 
     box_color = C.YELLOW
@@ -334,7 +383,9 @@ def _handle_guess_action(decision, step_count, section_radar, details, board, ca
             f"  {branch} {tag} {C.MAGENTA}({cr:02d}, {cc:02d}){C.RESET} {ctype} | 预估存活: {surv_str}"
         )
         if ctype != "内部盲狙":
-            rec_act = f"{C.GREEN}[左键]{C.RESET}" if surv >= 50 else f"{C.RED}[右键]{C.RESET}"
+            rec_act = (
+                f"{C.GREEN}[左键]{C.RESET}" if surv >= 50 else f"{C.RED}[右键]{C.RESET}"
+            )
             section_action.append(
                 f"      └ 建议: {rec_act} | "
                 f"香农熵增益: {C.CYAN}{gain:.3f} bits{C.RESET} | "
@@ -354,6 +405,8 @@ def _handle_guess_action(decision, step_count, section_radar, details, board, ca
         f"   {C.CYAN}【Enter 回车】{C.RESET} : 我已手动操作，直接让 AI 继续扫描",
     ]
     print("\n".join(wait_msg))
+
+    consistency_checker.reset_history()
 
     state.waiting = True
     state.decision = None
@@ -375,20 +428,23 @@ def _handle_guess_action(decision, step_count, section_radar, details, board, ca
 
 
 def run_auto_bot(
-    rows: int = 16, cols: int = 30, total_mines: int = 99, model_path=None, meta_path=None, root_path=None
+    rows=16, cols=30, total_mines=99, model_path=None, meta_path=None, root_path=None
 ):
     state = BotState()
     capture, recognizer, solver, collector = _init_bot_components(
         rows, cols, total_mines, model_path, meta_path, root_path
     )
 
-    start_keyboard_listener(state)
+    consistency_checker = ConsistencyChecker()
+    stable_board = [[-1] * cols for _ in range(rows)]
 
-    step_count = 0
-    execution_queue = []
+    start_keyboard_listener(state)
+    step_count, execution_queue = 0, []
 
     while not state.stop:
-        board_data = _scan_full_board(capture, recognizer, state, collector)
+        board_data = _scan_full_board(
+            capture, recognizer, state, collector, consistency_checker, stable_board
+        )
 
         if state.stop:
             os._exit(0)
@@ -397,11 +453,14 @@ def run_auto_bot(
             continue
 
         board, stats, cell_images = board_data
+        stable_board = [row[:] for row in board]
 
         if _check_win_conditions(stats, total_mines, collector):
             break
 
-        decision = _resolve_next_decision(board, execution_queue, solver, cell_images, collector, state)
+        decision = _resolve_next_decision(
+            board, execution_queue, solver, cell_images, collector, state
+        )
 
         if decision is None:
             continue
@@ -420,6 +479,17 @@ def run_auto_bot(
         section_radar = _format_radar_section(stats, calc_time, details)
 
         if action in ("CLICK", "FLAG"):
-            _handle_deterministic_action(decision, step_count, section_radar, details, board, capture)
+            _handle_deterministic_action(
+                decision, step_count, section_radar, details, board, capture
+            )
         else:
-            _handle_guess_action(decision, step_count, section_radar, details, board, capture, state)
+            _handle_guess_action(
+                decision,
+                step_count,
+                section_radar,
+                details,
+                board,
+                capture,
+                state,
+                consistency_checker,
+            )

@@ -3,6 +3,7 @@ from typing import Any
 
 if sys.platform == "win32":
     import ctypes
+
     import cv2
     import mss
     import numpy as np

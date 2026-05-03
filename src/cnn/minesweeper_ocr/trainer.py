@@ -41,7 +41,9 @@ def run_training(
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=2)
 
     print(f"总样本数: {len(full_dataset)} | 训练集: {train_size} | 验证集: {val_size}")
-    print(f"网络参数量: {sum(p.numel() for p in MinesweeperCNN().parameters()) / 1000:.2f} K")
+    print(
+        f"网络参数量: {sum(p.numel() for p in MinesweeperCNN().parameters()) / 1000:.2f} K"
+    )
 
     model = MinesweeperCNN(num_classes=9).to(device)
     criterion = nn.CrossEntropyLoss()
@@ -86,7 +88,7 @@ def run_training(
         history.append((train_loss, val_loss, train_acc, val_acc))
 
         print(
-            f"Epoch [{epoch+1:02d}/{epochs}] | "
+            f"Epoch [{epoch + 1:02d}/{epochs}] | "
             f"Train Loss: {train_loss:.4f} Acc: {train_acc:5.1f}% | "
             f"Val Loss: {val_loss:.4f}准确率: {val_acc:5.1f}%"
         )

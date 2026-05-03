@@ -7,8 +7,8 @@ from pathlib import Path
 
 import torch
 
-from src.export import MinesweeperCNN
 from src.cnn.minesweeper_ocr import predict_image
+from src.export import MinesweeperCNN
 
 
 def _load_meta_and_class_names(meta_path: str) -> tuple[dict[int, str], list[str]]:
@@ -24,21 +24,27 @@ def _load_meta_and_class_names(meta_path: str) -> tuple[dict[int, str], list[str
     return idx_to_class, class_names
 
 
-def _collect_train_images(train_dir: str, class_names: list[str]) -> dict[str, list[str]]:
+def _collect_train_images(
+    train_dir: str, class_names: list[str]
+) -> dict[str, list[str]]:
     """Collect all training images by class."""
     train_class_images: dict[str, list[str]] = {}
     for cls_name in class_names:
         cls_dir = os.path.join(train_dir, cls_name)
         if os.path.isdir(cls_dir):
             imgs = [
-                os.path.join(cls_dir, f) for f in os.listdir(cls_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))
+                os.path.join(cls_dir, f)
+                for f in os.listdir(cls_dir)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
             ]
             if imgs:
                 train_class_images[cls_name] = imgs
     return train_class_images
 
 
-def _copy_sampled_images(train_class_images: dict[str, list[str]], test_dir: str) -> None:
+def _copy_sampled_images(
+    train_class_images: dict[str, list[str]], test_dir: str
+) -> None:
     """Copy randomly sampled images (30-40%) from training to test directory."""
     for cls_name, imgs in train_class_images.items():
         sample_ratio = random.uniform(0.3, 0.4)
@@ -56,7 +62,9 @@ def _copy_sampled_images(train_class_images: dict[str, list[str]], test_dir: str
 def _build_test_pool(test_dir: str) -> list[tuple[str, str]]:
     """Build test pool from test directory files."""
     test_pool: list[tuple[str, str]] = []
-    test_files = [f for f in os.listdir(test_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+    test_files = [
+        f for f in os.listdir(test_dir) if f.lower().endswith((".png", ".jpg", ".jpeg"))
+    ]
     for test_filename in test_files:
         true_label = test_filename.split("-")[0]
         test_filepath = os.path.join(test_dir, test_filename)
@@ -65,10 +73,15 @@ def _build_test_pool(test_dir: str) -> list[tuple[str, str]]:
 
 
 def _evaluate_predictions(
-    test_pool: list[tuple[str, str]], model: MinesweeperCNN, device: torch.device, class_names: list[str]
+    test_pool: list[tuple[str, str]],
+    model: MinesweeperCNN,
+    device: torch.device,
+    class_names: list[str],
 ) -> dict[str, dict[str, int]]:
     """Evaluate model predictions and collect statistics."""
-    class_stats: dict[str, dict[str, int]] = {cls: {"total": 0, "correct": 0} for cls in class_names}
+    class_stats: dict[str, dict[str, int]] = {
+        cls: {"total": 0, "correct": 0} for cls in class_names
+    }
 
     for img_path, true_label in test_pool:
         pred_label = predict_image(img_path, model, device)
@@ -89,23 +102,32 @@ def _print_results(
     """Print test results report."""
     print("\n" + "=" * 47 + "\n")
     print("🔍 扫雷 AI 模拟实战深度测试报告")
-    print(f"测试规则: 随机抽取训练集 30%~40% 图片作为测试集，共抽测 {len(test_pool)} 张")
+    print(
+        f"测试规则: 随机抽取训练集 30%~40% 图片作为测试集，共抽测 {len(test_pool)} 张"
+    )
     print(f"测试时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"使用设备: {device}\n")
 
     print("=" * 47)
     print(f"| {'类别':<5} | {'测试数':>6} | {'正确数':>6} | {'准确率':>6} |")
-    print(f"| {'-'*7}-+-{'-'*9}-+-{'-'*9}-+-{'-'*9} |")
+    print(f"| {'-' * 7}-+-{'-' * 9}-+-{'-' * 9}-+-{'-' * 9} |")
 
     for cls_name in class_names:
         stats = class_stats[cls_name]
         acc = (stats["correct"] / stats["total"] * 100.0) if stats["total"] > 0 else 0.0
-        print(f"| {cls_name:<7} | {stats['total']:>9} | {stats['correct']:>9} | {acc:>8.2f}% |")
+        print(
+            f"| {cls_name:<7} | {stats['total']:>9} | {stats['correct']:>9} | {acc:>8.2f}% |"
+        )
 
     print("=" * 47 + "\n")
 
 
-def run_test(test_count: int, model: MinesweeperCNN, device: torch.device, root_path: Path | None = None) -> None:
+def run_test(
+    test_count: int,
+    model: MinesweeperCNN,
+    device: torch.device,
+    root_path: Path | None = None,
+) -> None:
     """纯测试逻辑：从train抖取30%~40%数据到test文件夹，模拟实战深度测试并打印报告"""
     _root = root_path or Path(__file__).resolve().parent.parent.parent.parent
     meta_path = str(_root / "model" / "minesweeper_meta.json")

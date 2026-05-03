@@ -113,8 +113,6 @@ def print_board_matrix_for_debug(board):
                 formatted_row.append(" -1")
             elif cell == "F":
                 formatted_row.append("'F'")
-            elif cell == "Q":
-                formatted_row.append("'Q'")
             else:
                 formatted_row.append(f" {cell} ")
         output_lines.append("    [" + ", ".join(formatted_row) + "],")

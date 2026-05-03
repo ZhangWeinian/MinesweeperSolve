@@ -6,15 +6,23 @@ from torchvision import transforms
 
 from src.export import MinesweeperCNN
 
-IDX_TO_CLASS: dict[int, str] = {0: "flag", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8"}
+IDX_TO_CLASS: dict[int, str] = {
+    0: "flag",
+    1: "1",
+    2: "2",
+    3: "3",
+    4: "4",
+    5: "5",
+    6: "6",
+    7: "7",
+    8: "8",
+}
 
-TRANSFORM = transforms.Compose(
-    [
-        transforms.Resize((64, 64)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ]
-)
+TRANSFORM = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+])
 
 
 def is_pure_color(image_path: str) -> bool:

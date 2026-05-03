@@ -10,8 +10,8 @@ def main(args=None, root_path=None):
 
     import torch
 
-    from src.export import MinesweeperCNN
     from src.cnn.test import run_test
+    from src.export import MinesweeperCNN
 
     _root = root_path or Path(__file__).resolve().parent.parent.parent
     _model_path = _root / "model" / "minesweeper_cnn.pth"
