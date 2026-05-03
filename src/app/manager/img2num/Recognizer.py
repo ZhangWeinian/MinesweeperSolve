@@ -8,14 +8,11 @@ from torchvision import transforms
 from src.app.manager.img2num.Preprocessor import binarize_cell
 from src.export import MinesweeperCNN
 
-_TRANSFORM = transforms.Compose(
-    [
-        transforms.Resize((64, 64)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ]
-)
-
+_TRANSFORM = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+])
 
 class CellRecognizer:
     def __init__(self, model_path, meta_path):
@@ -34,7 +31,12 @@ class CellRecognizer:
         print(f"✅ [CNN 识别引擎] 模型已加载，设备: {self.device}，类别数: {num_classes}")
 
     def _cnn_predict_batch(self, cell_imgs_bgr: list[np.ndarray]) -> tuple[list[str], list[float]]:
-        """批量 CNN 推理，返回 (类别列表, 置信度列表)"""
+        """
+        批量 CNN 推理。
+        返回: (类别列表, 置信度列表)
+        注意：这里绝不作拦截，置信度仅作为上层 ConsistencyChecker 的“3帧决胜”打分依据
+        """
+
         tensors = []
         for img in cell_imgs_bgr:
             rgb = img[:, :, ::-1].copy()
@@ -52,12 +54,13 @@ class CellRecognizer:
         confidences = max_probs.cpu().numpy().tolist()
         return labels, confidences
 
-    def analyze_row(self, cell_images: list[np.ndarray]) -> list[tuple]:
+    def analyze_row(self, cell_images: list[np.ndarray]) -> list[tuple[int | str, float]]:
         """
         分析一行图像。
         返回: [(value, confidence), ...]
-        注意: confidence 为 -1.0 表示盲区/空白，不需要进入一致性校验器
+        confidence 为 -1.0 表示盲区/空白，不参与时序校验，直接采信
         """
+
         results: list[tuple[int | str, float]] = [(-1, -1.0)] * len(cell_images)
         cnn_indices = []
 

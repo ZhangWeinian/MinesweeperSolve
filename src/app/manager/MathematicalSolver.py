@@ -367,18 +367,20 @@ class ExpertMinesweeperSolver:
         isolated_cells = unknown_cells - frontier_cells
         block_solutions = [self._compute_block_solution(block) for block in blocks]
 
+        simple_block_dps = [{m: d["config_count"] for m, d in sol.items()} for sol in block_solutions]
+
         num_blocks = len(block_solutions)
         prefix_dp = [{} for _ in range(num_blocks + 1)]
         prefix_dp[0] = {0: 1}
         for i in range(num_blocks):
-            prefix_dp[i + 1] = self._merge_dp(prefix_dp[i], block_solutions[i], remaining_mines)
+            prefix_dp[i+1] = self._merge_dp(prefix_dp[i], simple_block_dps[i], remaining_mines)
 
         suffix_dp = [{} for _ in range(num_blocks + 1)]
         suffix_dp[num_blocks] = {0: 1}
         for i in range(num_blocks - 1, -1, -1):
-            suffix_dp[i] = self._merge_dp(suffix_dp[i + 1], block_solutions[i], remaining_mines)
+            suffix_dp[i] = self._merge_dp(suffix_dp[i+1], simple_block_dps[i], remaining_mines)
 
-        other_dps = [self._merge_dp(prefix_dp[i], suffix_dp[i + 1], remaining_mines) for i in range(num_blocks)]
+        other_dps = [self._merge_dp(prefix_dp[i], suffix_dp[i+1], remaining_mines) for i in range(num_blocks)]
         all_blocks_dp = prefix_dp[num_blocks]
 
         total_global_configs = sum(

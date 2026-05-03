@@ -218,8 +218,12 @@ def _resolve_next_decision(
 ):
     """处理执行队列或请求求解器计算下一步。返回 decision 或 None(表示遇到错误需跳过)。"""
 
-    while execution_queue and board[execution_queue[0]["cell"]] != -1:
-        execution_queue.pop(0)
+    while execution_queue:
+        r, c = execution_queue[0]["cell"]
+        if board[r][c] != -1:
+            execution_queue.pop(0)
+        else:
+            break
 
     if execution_queue:
         return execution_queue.pop(0)
